@@ -9,6 +9,13 @@ use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
+pub enum BooleanOr<T> {
+    Value(T),
+    Boolean(bool),
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
 pub enum ReferenceOr<T> {
     Value(T),
     Ref(Reference),
@@ -649,13 +656,12 @@ pub struct Schema {
     #[serde(skip_serializing_if = "Option::is_none", rename = "patternProperties")]
     pub pattern_properties: Option<HashMap<String, Schema>>,
 
-    // TODO: add `boolean` support
     // bool support until v3.1.0
     #[serde(
         skip_serializing_if = "Option::is_none",
         rename = "additionalProperties"
     )]
-    pub additional_properties: Option<Box<Schema>>,
+    pub additional_properties: Option<Box<BooleanOr<Schema>>>,
 
     #[serde(skip_serializing_if = "Option::is_none", rename = "propertyNames")]
     pub property_names: Option<Box<Schema>>,
@@ -1555,6 +1561,30 @@ mod tests {
         let v = Schema::default();
         let s = serde_json::to_string(&v).unwrap();
         assert_eq!("{}", s);
+        let r = serde_json::from_str::<Schema>(&s).unwrap();
+        assert_eq!(v, r);
+    }
+
+    #[test]
+    fn serde_schema_additional_properties_value() {
+        let v = Schema {
+            additional_properties: Some(Box::new(BooleanOr::Value(Schema::default()))),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!("{\"additionalProperties\":{}}", s);
+        let r = serde_json::from_str::<Schema>(&s).unwrap();
+        assert_eq!(v, r);
+    }
+
+    #[test]
+    fn serde_schema_additional_properties_bool() {
+        let v = Schema {
+            additional_properties: Some(Box::new(BooleanOr::Boolean(true))),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!("{\"additionalProperties\":true}", s);
         let r = serde_json::from_str::<Schema>(&s).unwrap();
         assert_eq!(v, r);
     }

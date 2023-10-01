@@ -1397,6 +1397,22 @@ mod tests {
     }
 
     #[test]
+    fn serde_media_type_example_null() {
+        let mut v = MediaType {
+            example: Examples::Value {
+                example: Some(Any::Null),
+            },
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!("{\"example\":null}", s);
+        // deserialize `null` to `None`.
+        v.example = Examples::Value { example: None };
+        let r = serde_json::from_str::<MediaType>(&s).unwrap();
+        assert_eq!(v, r);
+    }
+
+    #[test]
     fn serde_media_type_examples() {
         let v = MediaType {
             example: Examples::Values {

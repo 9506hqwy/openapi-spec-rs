@@ -8,7 +8,6 @@ use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 
-// TODO: add `Null` support.
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum Any {
@@ -17,6 +16,7 @@ pub enum Any {
     String(String),
     Array(Vec<Any>),
     Object(HashMap<String, Any>),
+    Null,
 }
 
 // ---------------------------------------------------------------------------

@@ -768,10 +768,8 @@ pub struct Schema {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub examples: Option<Vec<Any>>,
     // TODO: add more `JSON Schema` support.
-
-    // TODO: additional properties MAY omit the x- prefix within this object.
     #[serde(flatten)]
-    pub extensions: Extensions,
+    pub extensions: KeyValues<Any>,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -1601,6 +1599,28 @@ mod tests {
         };
         let s = serde_json::to_string(&v).unwrap();
         assert_eq!("{\"additionalProperties\":true}", s);
+        let r = serde_json::from_str::<Schema>(&s).unwrap();
+        assert_eq!(v, r);
+    }
+
+    #[test]
+    fn serde_schema_extensions_value() {
+        let mut v = Schema::default();
+        v.extensions.values.insert("a".to_string(), Any::Number(0));
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!("{\"a\":0}", s);
+        let r = serde_json::from_str::<Schema>(&s).unwrap();
+        assert_eq!(v, r);
+    }
+
+    #[test]
+    fn serde_schema_extensions_extension() {
+        let mut v = Schema::default();
+        v.extensions
+            .extensions
+            .insert("a".to_string(), Any::Number(0));
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!("{\"x-a\":0}", s);
         let r = serde_json::from_str::<Schema>(&s).unwrap();
         assert_eq!(v, r);
     }

@@ -7,21 +7,21 @@ use self::model::{Any, Extensions, HttpStatuses, KeyValues};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum BooleanOr<T> {
     Value(T),
     Boolean(bool),
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum ReferenceOr<T> {
     Value(T),
     Ref(Reference),
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct OpenApi {
     pub openapi: String,
 
@@ -58,7 +58,7 @@ pub struct OpenApi {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Info {
     pub title: String,
 
@@ -84,7 +84,7 @@ pub struct Info {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Contact {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -99,7 +99,7 @@ pub struct Contact {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum License {
     Url(LicenseUrl),
@@ -107,7 +107,7 @@ pub enum License {
     Id(LicenseId),
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct LicenseId {
     pub name: String,
 
@@ -118,7 +118,7 @@ pub struct LicenseId {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct LicenseUrl {
     pub name: String,
 
@@ -128,7 +128,7 @@ pub struct LicenseUrl {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Server {
     pub url: String,
 
@@ -142,7 +142,7 @@ pub struct Server {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ServerVariable {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub r#enum: Option<Vec<String>>,
@@ -156,7 +156,7 @@ pub struct ServerVariable {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Components {
     // or reference until v3.1.0
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -196,7 +196,7 @@ pub struct Components {
 
 type Paths = KeyValues<PathItem>;
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct PathItem {
     #[serde(skip_serializing_if = "Option::is_none", rename = "$ref")]
     pub r#ref: Option<String>,
@@ -241,7 +241,7 @@ pub struct PathItem {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Operation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
@@ -284,7 +284,7 @@ pub struct Operation {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ExternalDocumentation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -295,7 +295,7 @@ pub struct ExternalDocumentation {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Parameter {
     pub name: String,
 
@@ -320,7 +320,7 @@ pub struct Parameter {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum ParameterPattern {
     Content(ParameterContent),
@@ -333,7 +333,7 @@ impl Default for ParameterPattern {
     }
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ParameterStyle {
     #[serde(skip_serializing_if = "Option::is_none")]
     style: Option<String>,
@@ -351,7 +351,7 @@ pub struct ParameterStyle {
     example: Examples,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum Examples {
     Values {
@@ -369,12 +369,12 @@ impl Default for Examples {
     }
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ParameterContent {
     content: HashMap<String, MediaType>,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub enum ParameterIn {
     #[default]
     #[serde(rename = "query")]
@@ -390,7 +390,7 @@ pub enum ParameterIn {
     Cookie,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct RequestBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -404,7 +404,7 @@ pub struct RequestBody {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct MediaType {
     // or reference until v3.1.0
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -420,7 +420,7 @@ pub struct MediaType {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Encoding {
     #[serde(skip_serializing_if = "Option::is_none", rename = "contentType")]
     pub content_type: Option<String>,
@@ -441,7 +441,7 @@ pub struct Encoding {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Responses {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub r#default: Option<ReferenceOr<Response>>,
@@ -453,7 +453,7 @@ pub struct Responses {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Response {
     pub description: String,
 
@@ -472,7 +472,7 @@ pub struct Response {
 
 type Callback = KeyValues<ReferenceOr<PathItem>>;
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Example {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
@@ -487,7 +487,7 @@ pub struct Example {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum ExampleValue {
     Url {
@@ -506,7 +506,7 @@ impl Default for ExampleValue {
     }
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Link {
     #[serde(flatten)]
     pub operation: LinkOperation,
@@ -527,7 +527,7 @@ pub struct Link {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum LinkOperation {
     #[serde(rename = "operationRef")]
     Ref(String),
@@ -542,7 +542,7 @@ impl Default for LinkOperation {
     }
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Header {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -563,7 +563,7 @@ pub struct Header {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Tag {
     pub name: String,
 
@@ -577,7 +577,7 @@ pub struct Tag {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Reference {
     #[serde(rename = "$ref")]
     pub r#ref: String,
@@ -591,7 +591,7 @@ pub struct Reference {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Schema {
     // until v3.1.0
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -772,7 +772,7 @@ pub struct Schema {
     pub extensions: KeyValues<Any>,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub enum SchemaType {
     #[default]
     #[serde(rename = "null")]
@@ -797,14 +797,14 @@ pub enum SchemaType {
     Integer,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum SchemaTypes {
     Unit(SchemaType),
     Array(Vec<SchemaType>),
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Discriminator {
     #[serde(rename = "propertyName")]
     pub property_name: String,
@@ -816,7 +816,7 @@ pub struct Discriminator {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Xml {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -837,7 +837,7 @@ pub struct Xml {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type")]
 pub enum SecurityScheme {
     #[serde(rename = "apiKey")]
@@ -857,7 +857,7 @@ pub enum SecurityScheme {
     MutualTls(SecuritySchemeMutualTls),
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct SecuritySchemeApiKey {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Any>,
@@ -870,7 +870,7 @@ pub struct SecuritySchemeApiKey {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct SecuritySchemeHttp {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Any>,
@@ -884,7 +884,7 @@ pub struct SecuritySchemeHttp {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct SecuritySchemeMutualTls {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Any>,
@@ -893,7 +893,7 @@ pub struct SecuritySchemeMutualTls {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct SecuritySchemeOauth2 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Any>,
@@ -904,7 +904,7 @@ pub struct SecuritySchemeOauth2 {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct SecuritySchemeOpenIdConnect {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Any>,
@@ -916,7 +916,7 @@ pub struct SecuritySchemeOpenIdConnect {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub enum SecuritySchemeIn {
     #[default]
     #[serde(rename = "query")]
@@ -929,7 +929,7 @@ pub enum SecuritySchemeIn {
     Cookie,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct OAuthFlows {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub implicit: Option<OAuthFlowImplicit>,
@@ -947,7 +947,7 @@ pub struct OAuthFlows {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct OAuthFlowImplicit {
     #[serde(rename = "authorizationUrl")]
     pub authrization_url: String,
@@ -961,7 +961,7 @@ pub struct OAuthFlowImplicit {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct OAuthFlowPassword {
     #[serde(rename = "tokenUrl")]
     pub token_url: String,
@@ -975,7 +975,7 @@ pub struct OAuthFlowPassword {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct OAuthFlowClientCredentials {
     #[serde(rename = "tokenUrl")]
     pub token_url: String,
@@ -989,7 +989,7 @@ pub struct OAuthFlowClientCredentials {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct OAuthFlowAuthorizationCode {
     #[serde(rename = "authorizationUrl")]
     pub authrization_url: String,
@@ -1013,7 +1013,7 @@ type SecurityRequirement = HashMap<String, Vec<String>>;
 // I think that the part file is not compilicant to Schema object.
 // https://spec.openapis.org/oas/v3.0.3#schemaObject
 // > Additional properties defined by the JSON Schema specification that are not mentioned here are strictly unsupported.
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct PartOpenApi {
     // since v3.1.0
     #[serde(skip_serializing_if = "Option::is_none", rename = "jsonSchemaDialect")]

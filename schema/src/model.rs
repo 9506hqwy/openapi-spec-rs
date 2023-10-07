@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum Any {
     Boolean(bool),
@@ -21,7 +21,7 @@ pub enum Any {
 
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Extensions {
     pub values: HashMap<String, Any>,
 }
@@ -76,7 +76,7 @@ impl<'de> Deserialize<'de> for Extensions {
 
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct HttpStatuses<T> {
     pub values: HashMap<u16, T>,
 }
@@ -156,7 +156,7 @@ where
 
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct KeyValues<T> {
     pub values: HashMap<String, T>,
     pub extensions: HashMap<String, Any>,

@@ -1008,6 +1008,44 @@ pub struct OAuthFlowAuthorizationCode {
 
 type SecurityRequirement = HashMap<String, Vec<String>>;
 
+// For splitting Redfish schema into multiple files.
+// I do not understand this specification.
+// I think that the part file is not compilicant to Schema object.
+// https://spec.openapis.org/oas/v3.0.3#schemaObject
+// > Additional properties defined by the JSON Schema specification that are not mentioned here are strictly unsupported.
+#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PartOpenApi {
+    // since v3.1.0
+    #[serde(skip_serializing_if = "Option::is_none", rename = "jsonSchemaDialect")]
+    pub json_schema_dialect: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub servers: Option<Vec<Server>>,
+
+    // required until v3.1.0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Paths>,
+
+    // since v3.1.0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhooks: Option<HashMap<String, ReferenceOr<PathItem>>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub components: Option<Components>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security: Option<Vec<SecurityRequirement>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<Tag>>,
+
+    #[serde(skip_serializing_if = "Option::is_none", rename = "externalDocs")]
+    pub external_docs: Option<ExternalDocumentation>,
+
+    #[serde(flatten)]
+    pub extensions: KeyValues<Any>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1733,6 +1771,15 @@ mod tests {
             s
         );
         let r = serde_json::from_str::<OAuthFlowAuthorizationCode>(&s).unwrap();
+        assert_eq!(v, r);
+    }
+
+    #[test]
+    fn serde_part_openapi() {
+        let v = PartOpenApi::default();
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!("{}", s);
+        let r = serde_json::from_str::<PartOpenApi>(&s).unwrap();
         assert_eq!(v, r);
     }
 }

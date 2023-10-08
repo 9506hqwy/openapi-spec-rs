@@ -199,7 +199,7 @@ fn dump_media(
     if let Some(schema) = &media.schema {
         match &schema.r#ref {
             Some(r) => {
-                let v = get_schema((model.0, &model.1), r)?;
+                let v = get_schema(model, r)?;
                 dump_schema((model.0, &Some(v.0)), &v.1)?
             }
             _ => dump_schema(model, schema)?,
@@ -229,7 +229,7 @@ fn get_schema_any(
     schema: &Schema,
 ) -> Result<Any, Box<dyn Error>> {
     if let Some(r) = schema.r#ref.as_ref() {
-        let v = get_schema((model.0, &model.1), r)?;
+        let v = get_schema(model, r)?;
         return get_schema_any((model.0, &Some(v.0)), &v.1);
     }
 

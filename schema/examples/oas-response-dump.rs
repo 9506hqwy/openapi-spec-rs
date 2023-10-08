@@ -1,13 +1,14 @@
 use openapi_spec_schema::model::Any;
 use openapi_spec_schema::{
-    MediaType, OpenApi, Reference, ReferenceOr, Response, Schema, SchemaType, SchemaTypes,
+    Components, MediaType, OpenApi, PartOpenApi, ReferenceOr, Response, Schema, SchemaType,
+    SchemaTypes,
 };
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args();
@@ -18,21 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .next()
         .map(|c| c.parse::<u16>().expect("Specify number"));
 
-    let mut file = File::open(&path)?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
-
-    let model = match path
-        .extension()
-        .ok_or("Not found extension")?
-        .to_str()
-        .unwrap()
-    {
-        "yml" => from_yml(&content),
-        "yaml" => from_yml(&content),
-        "json" => from_json(&content),
-        _ => panic!("Not supported format."),
-    }?;
+    let model = read_openapi(&path)?;
 
     let paths = model.paths.as_ref().ok_or("Not exists paths")?;
     let path_object = paths
@@ -61,10 +48,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .get(&code)
                     .ok_or("Not found status code")?;
                 match body {
-                    ReferenceOr::Value(v) => dump_response_body(&model, v)?,
+                    ReferenceOr::Value(v) => dump_response_body((&path, &model.components), v)?,
                     ReferenceOr::Ref(r) => {
-                        let v = get_response_body(&model, r)?;
-                        dump_response_body(&model, v)?
+                        let v = get_response_body((&path, &model.components), &r.r#ref)?;
+                        dump_response_body((&path, &Some(v.0)), &v.1)?
                     }
                 }
             } else {
@@ -80,6 +67,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn read_openapi(file: &Path) -> Result<OpenApi, Box<dyn Error>> {
+    let mut content = String::new();
+    File::open(file)?.read_to_string(&mut content)?;
+
+    match file
+        .extension()
+        .ok_or("Not found extension")?
+        .to_str()
+        .unwrap()
+    {
+        "yml" => from_yml(&content),
+        "yaml" => from_yml(&content),
+        "json" => from_json(&content),
+        _ => panic!("Not supported format."),
+    }
+}
+
 fn from_json(content: &str) -> Result<OpenApi, Box<dyn Error>> {
     Ok(serde_json::from_str::<OpenApi>(content)?)
 }
@@ -88,48 +92,111 @@ fn from_yml(content: &str) -> Result<OpenApi, Box<dyn Error>> {
     Ok(serde_yaml::from_str::<OpenApi>(content)?)
 }
 
-fn get_response_body<'a>(
-    model: &'a OpenApi,
-    r: &'a Reference,
-) -> Result<&'a Response, Box<dyn Error>> {
-    if let Some(name) = r.r#ref.strip_prefix("#/components/responses/") {
-        let body = model
-            .components
+fn read_part_openapi(file: &Path) -> Result<PartOpenApi, Box<dyn Error>> {
+    let mut content = String::new();
+    File::open(file)?.read_to_string(&mut content)?;
+
+    match file
+        .extension()
+        .ok_or("Not found extension")?
+        .to_str()
+        .unwrap()
+    {
+        "yml" => from_part_yml(&content),
+        "yaml" => from_part_yml(&content),
+        "json" => from_part_json(&content),
+        _ => panic!("Not supported format."),
+    }
+}
+
+fn from_part_json(content: &str) -> Result<PartOpenApi, Box<dyn Error>> {
+    Ok(serde_json::from_str::<PartOpenApi>(content)?)
+}
+
+fn from_part_yml(content: &str) -> Result<PartOpenApi, Box<dyn Error>> {
+    Ok(serde_yaml::from_str::<PartOpenApi>(content)?)
+}
+
+fn get_response_body(
+    components: (&Path, &Option<Components>),
+    r: &str,
+) -> Result<(Components, Response), Box<dyn Error>> {
+    if let Some(name) = r.strip_prefix("#/components/responses/") {
+        let path = components.0;
+        let body = components
+            .1
             .as_ref()
-            .ok_or("Not found components")?
+            .ok_or(format!("Not found components {path:?}"))?
             .responses
             .as_ref()
-            .ok_or("Not found responses")?
+            .ok_or(format!("Not found responses {path:?}"))?
             .get(name)
-            .ok_or(format!("Not found responses {name}"))?;
+            .ok_or(format!("Not found responses  {path:?}:{name}"))?;
         match body {
-            ReferenceOr::Value(v) => Ok(v),
-            ReferenceOr::Ref(r) => get_response_body(model, r),
+            ReferenceOr::Value(v) => Ok((components.1.as_ref().unwrap().clone(), v.clone())),
+            ReferenceOr::Ref(r) => get_response_body(components, &r.r#ref),
         }
     } else {
-        let name = r.r#ref.clone();
-        Err(format!("Not supported remote reference {name}"))?
+        get_remote_response_body(components.0, r)
     }
 }
 
-fn get_schema<'a>(model: &'a OpenApi, r: &'a str) -> Result<&'a Schema, Box<dyn Error>> {
+fn get_remote_response_body(
+    path: &Path,
+    r: &str,
+) -> Result<(Components, Response), Box<dyn Error>> {
+    if let Some((url, flags)) = r.rsplit_once('#') {
+        if let Some((_, file)) = url.rsplit_once('/') {
+            let mut path = PathBuf::from(path);
+            path.pop();
+            path.push(file);
+            let model = read_part_openapi(&path)?;
+            return get_response_body((&path, &model.components), &format!("#{flags}"));
+        }
+    }
+
+    Err(format!("Not supported remote reference {r}"))?
+}
+
+fn get_schema(
+    components: (&Path, &Option<Components>),
+    r: &str,
+) -> Result<(Components, Schema), Box<dyn Error>> {
     if let Some(name) = r.strip_prefix("#/components/schemas/") {
-        let schema = model
-            .components
+        let path = components.0;
+        let schema = components
+            .1
             .as_ref()
-            .ok_or("Not found components")?
+            .ok_or(format!("Not found components {path:?}"))?
             .schemas
             .as_ref()
-            .ok_or("Not found schemas")?
+            .ok_or(format!("Not found schemas {path:?}"))?
             .get(name)
-            .ok_or(format!("Not found schemas {name}"))?;
-        Ok(schema)
+            .ok_or(format!("Not found schemas  {path:?}:{name}"))?;
+        Ok((components.1.as_ref().unwrap().clone(), schema.clone()))
     } else {
-        Err(format!("Not supported remote reference {r}"))?
+        get_remote_schema(components.0, r)
     }
 }
 
-fn dump_response_body(model: &OpenApi, body: &Response) -> Result<(), Box<dyn Error>> {
+fn get_remote_schema(path: &Path, r: &str) -> Result<(Components, Schema), Box<dyn Error>> {
+    if let Some((url, flags)) = r.rsplit_once('#') {
+        if let Some((_, file)) = url.rsplit_once('/') {
+            let mut path = PathBuf::from(path);
+            path.pop();
+            path.push(file);
+            let model = read_part_openapi(&path)?;
+            return get_schema((&path, &model.components), &format!("#{flags}"));
+        }
+    }
+
+    Err(format!("Not supported remote reference {r}"))?
+}
+
+fn dump_response_body(
+    model: (&Path, &Option<Components>),
+    body: &Response,
+) -> Result<(), Box<dyn Error>> {
     if let Some(content) = &body.content {
         for (ty, media) in content {
             if ty.to_lowercase().contains("json") {
@@ -141,12 +208,15 @@ fn dump_response_body(model: &OpenApi, body: &Response) -> Result<(), Box<dyn Er
     Ok(())
 }
 
-fn dump_media(model: &OpenApi, media: &MediaType) -> Result<(), Box<dyn Error>> {
+fn dump_media(
+    model: (&Path, &Option<Components>),
+    media: &MediaType,
+) -> Result<(), Box<dyn Error>> {
     if let Some(schema) = &media.schema {
         match &schema.r#ref {
             Some(r) => {
                 let v = get_schema(model, r)?;
-                dump_schema(model, v)?
+                dump_schema((model.0, &Some(v.0)), &v.1)?
             }
             _ => dump_schema(model, schema)?,
         }
@@ -155,7 +225,7 @@ fn dump_media(model: &OpenApi, media: &MediaType) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-fn dump_schema(model: &OpenApi, schema: &Schema) -> Result<(), Box<dyn Error>> {
+fn dump_schema(model: (&Path, &Option<Components>), schema: &Schema) -> Result<(), Box<dyn Error>> {
     let model = get_schema_any(model, schema)?;
     let json = serde_json::to_string_pretty(&model)?;
     println!("{}", json);
@@ -170,10 +240,19 @@ fn get_schema_type(schema: &Schema) -> Result<&SchemaType, Box<dyn Error>> {
     }
 }
 
-fn get_schema_any(model: &OpenApi, schema: &Schema) -> Result<Any, Box<dyn Error>> {
+fn get_schema_any(
+    model: (&Path, &Option<Components>),
+    schema: &Schema,
+) -> Result<Any, Box<dyn Error>> {
     if let Some(r) = schema.r#ref.as_ref() {
         let v = get_schema(model, r)?;
-        return get_schema_any(model, v);
+        return get_schema_any((model.0, &Some(v.0)), &v.1);
+    }
+
+    if let Some(any_of) = schema.any_of.as_ref() {
+        if let Some(schema) = any_of.iter().next() {
+            return get_schema_any(model, schema);
+        }
     }
 
     let ty = get_schema_type(schema)?;
@@ -189,13 +268,16 @@ fn get_schema_any(model: &OpenApi, schema: &Schema) -> Result<Any, Box<dyn Error
     Ok(model)
 }
 
-fn get_schema_array(model: &OpenApi, schema: &Schema) -> Result<Any, Box<dyn Error>> {
+fn get_schema_array(
+    model: (&Path, &Option<Components>),
+    schema: &Schema,
+) -> Result<Any, Box<dyn Error>> {
     let v = schema.items.as_ref().ok_or("Not found items")?;
     get_schema_any(model, v)
 }
 
 fn get_schema_hash(
-    model: &OpenApi,
+    model: (&Path, &Option<Components>),
     schema: &Schema,
 ) -> Result<HashMap<String, Any>, Box<dyn Error>> {
     let mut obj = HashMap::new();

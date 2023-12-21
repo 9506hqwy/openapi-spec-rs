@@ -3,12 +3,13 @@ use super::SchemaItem;
 use openapi_spec_schema::{Schema, SchemaType, SchemaTypes};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::HashSet;
 use std::str::FromStr;
 
 pub fn gen(schemas: &[SchemaItem]) -> Result<String, Error> {
     let config = Config { schemas };
 
-    let mut token_structs = vec![];
+    let mut structs = vec![];
     for item in config.schemas {
         if item.schema.all_of.is_some() {
             panic!("Not supported `allOf`.");
@@ -18,102 +19,217 @@ pub fn gen(schemas: &[SchemaItem]) -> Result<String, Error> {
             panic!("Not supported `oneOf`.");
         }
 
-        let struct_name = upper_camel_case(&item.schema_name);
-        let struct_ident = format_ident!("{struct_name}");
-
-        if let Some(any_of) = item.schema.any_of.as_ref() {
-            let mut variants = vec![];
-            for variant_schema in any_of {
-                let r = variant_schema.r#ref.as_deref().unwrap();
-                let variant_schema_def = config.get_def_by_url(&item.file_name, r)?;
-                variants.push(variant_schema_def.schema_name.clone());
-            }
-
-            variants.sort();
-
-            let variant_idents = variants.iter().map(|v| {
-                let variant_ident = format_ident!("{}", upper_camel_case(v));
-                quote! {
-                    #variant_ident(#variant_ident)
-                }
-            });
-
-            token_structs.push(quote! {
-                #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-                #[serde(untagged)]
-                pub enum #struct_ident {
-                    #(#variant_idents),*
-                }
-            });
-        } else if let Some(enum_values) = item.schema.r#enum.as_ref() {
-            let mut variants = enum_values.to_vec();
-
-            variants.sort();
-
-            let variant_idents = variants.iter().map(|v| {
-                let variant_ident = format_ident!("{}", upper_camel_case(v));
-                quote! {
-                    #[serde(rename = #v)]
-                    #variant_ident
-                }
-            });
-
-            token_structs.push(quote! {
-                #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-                pub enum #struct_ident {
-                    #[default]
-                    #(#variant_idents),*
-                }
-            });
+        if item.schema.any_of.is_some() {
+            structs.push(gen_newtype_variant(&config, item)?);
+        } else if item.schema.r#enum.is_some() {
+            structs.push(gen_unit_variant(&config, item)?);
         } else if !primitive(&item.schema) {
-            gen_struct(&config, item, &mut token_structs)?;
+            structs.append(&mut gen_struct(&config, item)?);
         }
     }
 
-    let model = quote! {
-        use serde::{Deserialize, Serialize};
+    let mut token_modules = vec![];
+    for module_name in module_names(&structs) {
+        if module_name.is_empty() {
+            continue;
+        }
 
-        #(#token_structs)*
+        let module_types = structs
+            .iter()
+            .filter(|s| s.module.0 == module_name)
+            .collect::<Vec<&StructInfo>>();
+
+        let mut token_versions = vec![];
+        for version in versions(&module_types) {
+            if version.is_empty() {
+                continue;
+            }
+
+            let mut version_types = module_types
+                .iter()
+                .filter(|s| s.module.1 == version)
+                .collect::<Vec<&&StructInfo>>();
+
+            version_types.sort_unstable_by_key(|&&s| &s.name);
+            let tokens = version_types.iter().map(|s| &s.token);
+
+            let version_ident = format_ident!("{version}");
+            token_versions.push(quote! {
+                pub mod #version_ident {
+                    use serde::{Deserialize, Serialize};
+
+                    #(#tokens)*
+                }
+            });
+        }
+
+        let mut m_types = module_types
+            .iter()
+            .filter(|s| s.module.1.is_empty())
+            .collect::<Vec<&&StructInfo>>();
+
+        let use_stmt = if m_types.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                use serde::{Deserialize, Serialize};
+            }
+        };
+
+        let token = if m_types.is_empty() {
+            quote! {}
+        } else {
+            m_types.sort_unstable_by_key(|s| &s.name);
+            let tokens = m_types.iter().map(|s| &s.token);
+
+            quote! {
+                #(#tokens)*
+            }
+        };
+
+        let module_ident = format_ident!("{module_name}");
+        token_modules.push(quote! {
+            pub mod #module_ident {
+                #use_stmt
+
+                #token
+
+                #(#token_versions)*
+            }
+        });
+    }
+
+    let mut s_types = structs
+        .iter()
+        .filter(|s| s.module.0.is_empty())
+        .collect::<Vec<&StructInfo>>();
+
+    let use_stmt = if s_types.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            use serde::{Deserialize, Serialize};
+        }
+    };
+
+    let token = if s_types.is_empty() {
+        quote! {}
+    } else {
+        s_types.sort_unstable_by_key(|s| &s.name);
+        let tokens = s_types.iter().map(|s| &s.token);
+
+        quote! {
+            #(#tokens)*
+        }
+    };
+
+    let model = quote! {
+        #use_stmt
+
+        #token
+
+        #(#token_modules)*
     };
 
     Ok(model.to_string())
 }
 
-fn gen_struct(
-    config: &Config,
-    item: &SchemaItem,
-    token_structs: &mut Vec<TokenStream>,
-) -> Result<(), Error> {
-    let struct_name = upper_camel_case(&item.schema_name);
+fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Error> {
+    let struct_name = config.types_name(&item.schema_name);
     let struct_ident = format_ident!("{struct_name}");
 
+    let mut variants = item.schema.r#enum.as_ref().unwrap().to_vec();
+
+    variants.sort();
+
+    let variant_idents = variants.iter().map(|v| {
+        let variant_ident = format_ident!("{}", config.enum_variants_name(v));
+        quote! {
+            #[serde(rename = #v)]
+            #variant_ident
+        }
+    });
+
+    Ok(StructInfo {
+        module: config.modules_name(&item.schema_name),
+        name: struct_name,
+        token: quote! {
+            #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+            pub enum #struct_ident {
+                #[default]
+                #(#variant_idents),*
+            }
+        },
+    })
+}
+
+fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Error> {
+    let struct_name = config.types_name(&item.schema_name);
+    let struct_ident = format_ident!("{struct_name}");
+
+    let mut variants = vec![];
+    for variant_schema in item.schema.any_of.as_ref().unwrap() {
+        let r = variant_schema.r#ref.as_deref().unwrap();
+        let variant_schema_def = config.get_def_by_url(&item.schema_file_name, r)?;
+        variants.push(variant_schema_def.schema_name.clone());
+    }
+
+    variants.sort();
+
+    let variant_idents = variants.iter().map(|v| {
+        let variant_ident = format_ident!("{}", config.enum_variants_name(v));
+        let ref_ty_ident = config.ref_types_name(v);
+        quote! {
+            #variant_ident(#ref_ty_ident)
+        }
+    });
+
+    Ok(StructInfo {
+        module: config.modules_name(&item.schema_name),
+        name: struct_name,
+        token: quote! {
+            #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+            #[serde(untagged)]
+            pub enum #struct_ident {
+                #(#variant_idents),*
+            }
+        },
+    })
+}
+
+fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Error> {
+    let struct_name = config.types_name(&item.schema_name);
+    let struct_ident = format_ident!("{struct_name}");
+
+    let mut structs = vec![];
     let mut property_info = vec![];
     if let Some(properties) = item.schema.properties.as_ref() {
         for (prop_name, prop_schema) in properties {
             let mut derive = quote! { #[serde(rename = #prop_name)] };
 
-            let field_name = snake_case(prop_name);
+            let field_name = config.fields_name(prop_name);
             let field_ident = if rust_reserved(&field_name) {
-                format_ident!("r#{}", snake_case(prop_name))
+                format_ident!("r#{}", field_name)
             } else {
-                format_ident!("{}", snake_case(prop_name))
+                format_ident!("{}", field_name)
             };
 
             let mut field_ty = if anonymous_ty(prop_schema) {
-                let ty_name = upper_camel_case(&format!("{struct_name}_{prop_name}"));
+                // join '-' because of splitting '_' for name conversion using `Config` struct.
+                let ty_name = config.types_name(&format!("{struct_name}-{prop_name}"));
                 let ty_name_ident = format_ident!("{ty_name}");
 
                 let anonymous = SchemaItem {
-                    file_name: item.file_name.clone(),
+                    schema_file_name: item.schema_file_name.clone(),
                     schema: prop_schema.clone(),
                     schema_name: ty_name,
                 };
 
-                gen_struct(config, &anonymous, token_structs)?;
+                structs.append(&mut gen_struct(config, &anonymous)?);
 
                 quote! { #ty_name_ident }
             } else {
-                schema_ty(config, &item.file_name, prop_schema)?
+                schema_ty(config, &item.schema_file_name, prop_schema)?
             };
 
             if !required(&item.schema, prop_name) {
@@ -136,14 +252,18 @@ fn gen_struct(
     property_info.sort_unstable_by_key(|p| p.name.clone());
     let token_properties = property_info.iter().map(|p| &p.token);
 
-    token_structs.push(quote! {
-        #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-        pub struct #struct_ident {
-            #(#token_properties),*
-        }
+    structs.push(StructInfo {
+        module: config.modules_name(&item.schema_name),
+        name: struct_name,
+        token: quote! {
+            #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+            pub struct #struct_ident {
+                #(#token_properties),*
+            }
+        },
     });
 
-    Ok(())
+    Ok(structs)
 }
 
 fn schema_ty(config: &Config, file_name: &str, schema: &Schema) -> Result<TokenStream, Error> {
@@ -180,12 +300,10 @@ fn schema_object_ty(
     let schema_ref = schema.r#ref.as_deref().unwrap();
     let schema_def = config.get_def_by_url(file_name, schema_ref)?;
     if primitive(&schema_def.schema) {
-        return schema_ty(config, &schema_def.file_name, &schema_def.schema);
+        return schema_ty(config, &schema_def.schema_file_name, &schema_def.schema);
     }
 
-    let ref_name = upper_camel_case(&schema_def.schema_name);
-    let ref_ident = format_ident!("{ref_name}");
-    Ok(quote! { #ref_ident })
+    Ok(config.ref_types_name(&schema_def.schema_name))
 }
 
 fn anonymous_ty(schema: &Schema) -> bool {
@@ -246,6 +364,24 @@ fn upper_camel_case(value: &str) -> String {
 
 fn snake_case(value: &str) -> String {
     let v = value
+        // Change word because snake-casing not work well.
+        .replace("ETag", "Etag")
+        .replace("FCoE", "FcOe")
+        .replace("I2C", "I2c")
+        .replace("IDs", "Ids")
+        .replace("IPv4", "Ipv4")
+        .replace("IPv6", "Ipv6")
+        .replace("kVAh", "Kvah")
+        .replace("kVARh", "Kvarh")
+        .replace("LoS", "Los")
+        .replace("MHz", "Mhz")
+        .replace("NVMe", "Nvme")
+        .replace("NvmeoF", "Nvme_Of")
+        .replace("OAuth", "Oauth")
+        .replace("PCIe", "Pcie")
+        .replace("QoS", "Qos")
+        .replace("VLAN", "Vlan")
+        .replace("VLan", "Vlan")
         .split(&['_', '+', '-', '.', '@', '#', ' ', '/', ':'][..])
         .flat_map(|v| {
             let mut words = vec![];
@@ -332,11 +468,82 @@ impl<'a> Config<'a> {
             .ok_or(Error::invalid_component_path(uri))?;
         self.get_def_by_ref(&format!("{file_name}#{schema_name}"))
     }
+
+    // NOTICE: consider name conversion for redfish schema only.
+
+    fn modules_name(&self, source: &str) -> (String, String) {
+        let (value, _) = source.rsplit_once('_').unwrap_or_default();
+        let (module, version) = value.split_once('_').unwrap_or((value, ""));
+        (snake_case(module), snake_case(version))
+    }
+
+    fn types_name(&self, source: &str) -> String {
+        let (_, value) = source.rsplit_once('_').unwrap_or(("", source));
+        upper_camel_case(value)
+    }
+
+    fn enum_variants_name(&self, source: &str) -> String {
+        upper_camel_case(source)
+    }
+
+    fn fields_name(&self, source: &str) -> String {
+        snake_case(source)
+    }
+
+    fn ref_types_name(&self, source: &str) -> TokenStream {
+        let (module, version) = self.modules_name(source);
+        let ty_name = format_ident!("{}", self.types_name(source));
+
+        if module.is_empty() {
+            quote! {
+                crate::#ty_name
+            }
+        } else if version.is_empty() {
+            let module_ident = format_ident!("{module}");
+            quote! {
+                crate::#module_ident::#ty_name
+            }
+        } else {
+            let module_ident = format_ident!("{module}");
+            let version_ident = format_ident!("{version}");
+            quote! {
+                crate::#module_ident::#version_ident::#ty_name
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 
+struct StructInfo {
+    module: (String, String),
+    name: String,
+    token: TokenStream,
+}
+
 struct PropertyInfo {
     name: String,
     token: TokenStream,
+}
+
+fn module_names(items: &[StructInfo]) -> Vec<String> {
+    let module_names = items
+        .iter()
+        .map(|s| &s.module.0)
+        .collect::<HashSet<&String>>();
+
+    let mut module_names = module_names.into_iter().cloned().collect::<Vec<String>>();
+    module_names.sort();
+    module_names
+}
+
+fn versions(items: &[&StructInfo]) -> Vec<String> {
+    let versions = items
+        .iter()
+        .map(|&s| &s.module.1)
+        .collect::<HashSet<&String>>();
+
+    let mut versions = versions.into_iter().cloned().collect::<Vec<String>>();
+    versions.sort();
+    versions
 }

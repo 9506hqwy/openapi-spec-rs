@@ -241,7 +241,7 @@ fn collect_reference(
                 .ok_or(Error::arg(&format!("Not found schema {schema_ref}")))?;
 
             let item = SchemaItem {
-                file_name: file_name.to_string(),
+                schema_file_name: file_name.to_string(),
                 schema_name: schema_name.to_string(),
                 schema: schema.clone(),
             };
@@ -299,15 +299,15 @@ fn collect_schema_property(
 // ---------------------------------------------------------------------------
 
 pub struct SchemaItem {
-    file_name: String,
+    schema_file_name: String,
     schema_name: String,
     schema: Schema,
 }
 
 impl SchemaItem {
     fn r#ref(&self) -> String {
-        let file_name = &self.file_name;
+        let schema_file_name = &self.schema_file_name;
         let schema_name = &self.schema_name;
-        format!("{file_name}#{schema_name}")
+        format!("{schema_file_name}#{schema_name}")
     }
 }

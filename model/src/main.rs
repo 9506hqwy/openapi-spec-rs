@@ -7,51 +7,20 @@ use openapi_spec_schema::{
     OpenApi, Operation, PartOpenApi, ReferenceOr, RequestBody, Response, Schema,
 };
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 
 fn main() -> Result<(), Error> {
     let mut args = env::args();
-    let entry_file = PathBuf::from(args.nth(1).ok_or(Error::arg("Specify a file path."))?);
-    let model = read_openapi(&entry_file)?;
+    let root = PathBuf::from(
+        args.nth(1)
+            .ok_or(Error::arg("Specify a directory contains openapi.yaml."))?,
+    );
 
     let mut schemas = vec![];
-    if let Some(paths) = model.paths {
-        for (path, item) in paths.values {
-            if let Some(op) = item.get {
-                collect_schema(&entry_file, &path, "GET", &op, &mut schemas)?;
-            }
 
-            if let Some(op) = item.put {
-                collect_schema(&entry_file, &path, "PUT", &op, &mut schemas)?;
-            }
-
-            if let Some(op) = item.post {
-                collect_schema(&entry_file, &path, "POST", &op, &mut schemas)?;
-            }
-
-            if let Some(op) = item.delete {
-                collect_schema(&entry_file, &path, "DELETE", &op, &mut schemas)?;
-            }
-
-            if let Some(op) = item.options {
-                collect_schema(&entry_file, &path, "OPTIONS", &op, &mut schemas)?;
-            }
-
-            if let Some(op) = item.head {
-                collect_schema(&entry_file, &path, "HEAD", &op, &mut schemas)?;
-            }
-
-            if let Some(op) = item.patch {
-                collect_schema(&entry_file, &path, "PATCH", &op, &mut schemas)?;
-            }
-
-            if let Some(op) = item.trace {
-                collect_schema(&entry_file, &path, "TRACE", &op, &mut schemas)?;
-            }
-        }
-    }
+    collect_dir(&root, &root, &mut schemas)?;
 
     schemas.sort_unstable_by_key(|s| s.r#ref());
 
@@ -118,7 +87,68 @@ fn from_part_yml(content: &str) -> Result<PartOpenApi, Error> {
     Ok(serde_yaml::from_str::<PartOpenApi>(content)?)
 }
 
+fn collect_dir(root: &Path, dir: &Path, schemas: &mut Vec<SchemaItem>) -> Result<(), Error> {
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+
+        if path.is_file() && path.file_name().unwrap().to_str().unwrap() == "openapi.yaml" {
+            collect_schemas(root, &path, schemas)?;
+        } else if path.is_dir() {
+            collect_dir(root, &path, schemas)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_schemas(
+    root: &Path,
+    entry_file: &Path,
+    schemas: &mut Vec<SchemaItem>,
+) -> Result<(), Error> {
+    let model = read_openapi(entry_file)?;
+
+    if let Some(paths) = model.paths {
+        for (path, item) in paths.values {
+            if let Some(op) = item.get {
+                collect_schema(root, entry_file, &path, "GET", &op, schemas)?;
+            }
+
+            if let Some(op) = item.put {
+                collect_schema(root, entry_file, &path, "PUT", &op, schemas)?;
+            }
+
+            if let Some(op) = item.post {
+                collect_schema(root, entry_file, &path, "POST", &op, schemas)?;
+            }
+
+            if let Some(op) = item.delete {
+                collect_schema(root, entry_file, &path, "DELETE", &op, schemas)?;
+            }
+
+            if let Some(op) = item.options {
+                collect_schema(root, entry_file, &path, "OPTIONS", &op, schemas)?;
+            }
+
+            if let Some(op) = item.head {
+                collect_schema(root, entry_file, &path, "HEAD", &op, schemas)?;
+            }
+
+            if let Some(op) = item.patch {
+                collect_schema(root, entry_file, &path, "PATCH", &op, schemas)?;
+            }
+
+            if let Some(op) = item.trace {
+                collect_schema(root, entry_file, &path, "TRACE", &op, schemas)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn collect_schema(
+    root: &Path,
     entry_file: &Path,
     path: &str,
     method: &str,
@@ -127,8 +157,10 @@ fn collect_schema(
 ) -> Result<(), Error> {
     if let Some(req) = &op.request_body {
         match req {
-            ReferenceOr::Value(v) => collect_request_schema(entry_file, path, method, v, schemas)?,
-            ReferenceOr::Ref(r) => collect_reference(entry_file, &r.r#ref, schemas)?,
+            ReferenceOr::Value(v) => {
+                collect_request_schema(root, entry_file, path, method, v, schemas)?
+            }
+            ReferenceOr::Ref(r) => collect_reference(root, entry_file, &r.r#ref, schemas)?,
         }
     }
 
@@ -136,18 +168,18 @@ fn collect_schema(
         if let Some(default) = &res.r#default {
             match default {
                 ReferenceOr::Value(v) => {
-                    collect_response_schema(entry_file, path, method, &0, v, schemas)?
+                    collect_response_schema(root, entry_file, path, method, &0, v, schemas)?
                 }
-                ReferenceOr::Ref(r) => collect_reference(entry_file, &r.r#ref, schemas)?,
+                ReferenceOr::Ref(r) => collect_reference(root, entry_file, &r.r#ref, schemas)?,
             }
         }
 
         for (status, item) in &res.statuses.values {
             match item {
                 ReferenceOr::Value(v) => {
-                    collect_response_schema(entry_file, path, method, status, v, schemas)?
+                    collect_response_schema(root, entry_file, path, method, status, v, schemas)?
                 }
-                ReferenceOr::Ref(r) => collect_reference(entry_file, &r.r#ref, schemas)?,
+                ReferenceOr::Ref(r) => collect_reference(root, entry_file, &r.r#ref, schemas)?,
             }
         }
     }
@@ -156,6 +188,7 @@ fn collect_schema(
 }
 
 fn collect_request_schema(
+    root: &Path,
     entry_file: &Path,
     path: &str,
     method: &str,
@@ -170,7 +203,7 @@ fn collect_request_schema(
             }
 
             let r = schema.r#ref.as_ref().unwrap();
-            collect_reference(entry_file, r, schemas)?;
+            collect_reference(root, entry_file, r, schemas)?;
         }
     }
 
@@ -178,6 +211,7 @@ fn collect_request_schema(
 }
 
 fn collect_response_schema(
+    root: &Path,
     entry_file: &Path,
     path: &str,
     method: &str,
@@ -194,7 +228,7 @@ fn collect_response_schema(
                 }
 
                 let r = schema.r#ref.as_ref().unwrap();
-                collect_reference(entry_file, r, schemas)?;
+                collect_reference(root, entry_file, r, schemas)?;
             }
         }
     }
@@ -203,18 +237,21 @@ fn collect_response_schema(
 }
 
 fn collect_reference(
+    root: &Path,
     entry_file: &Path,
     r: &str,
     schemas: &mut Vec<SchemaItem>,
 ) -> Result<(), Error> {
     let (url, component) = r.split_once('#').unwrap();
 
-    let file_name = if !url.is_empty() {
-        let (_, f) = url.rsplit_once('/').unwrap();
-        f
+    let file_path = if url.is_empty() {
+        PathBuf::from(entry_file)
     } else {
-        entry_file.file_name().and_then(|n| n.to_str()).unwrap()
+        let path = url.splitn(4, '/').last().unwrap();
+        root.join(path)
     };
+
+    let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap();
 
     let (_, schema_name) = component.rsplit_once('/').unwrap();
 
@@ -223,10 +260,6 @@ fn collect_reference(
     if schemas.iter().any(|i| i.r#ref() == schema_ref) {
         return Ok(());
     }
-
-    let mut file_path = PathBuf::from(entry_file);
-    file_path.pop();
-    file_path.push(file_name);
 
     match read_part_openapi(&file_path) {
         Ok(model) => {
@@ -248,12 +281,12 @@ fn collect_reference(
 
             schemas.push(item);
 
-            collect_schema_property(&file_path, schema, schemas)?;
+            collect_schema_property(root, &file_path, schema, schemas)?;
 
             if let Some(any_of) = schema.any_of.as_ref() {
                 for s in any_of {
                     if let Some(r) = s.r#ref.as_ref() {
-                        collect_reference(entry_file, r, schemas)?;
+                        collect_reference(root, entry_file, r, schemas)?;
                     }
                 }
             }
@@ -267,6 +300,7 @@ fn collect_reference(
 }
 
 fn collect_schema_property(
+    root: &Path,
     entry_file: &Path,
     entry: &Schema,
     schemas: &mut Vec<SchemaItem>,
@@ -274,19 +308,19 @@ fn collect_schema_property(
     if let Some(properties) = entry.properties.as_ref() {
         for property in properties.values() {
             if let Some(r) = property.r#ref.as_ref() {
-                collect_reference(entry_file, r, schemas)?;
+                collect_reference(root, entry_file, r, schemas)?;
             }
 
             if let Some(i) = property.items.as_ref() {
                 if let Some(r) = i.r#ref.as_ref() {
-                    collect_reference(entry_file, r, schemas)?;
+                    collect_reference(root, entry_file, r, schemas)?;
                 }
             }
 
             if let Some(any_of) = property.any_of.as_ref() {
                 for s in any_of {
                     if let Some(r) = s.r#ref.as_ref() {
-                        collect_reference(entry_file, r, schemas)?;
+                        collect_reference(root, entry_file, r, schemas)?;
                     }
                 }
             }

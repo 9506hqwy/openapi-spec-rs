@@ -278,6 +278,7 @@ fn collect_reference(
                 .ok_or(Error::arg(&format!("Not found schema {schema_ref}")))?;
 
             let item = SchemaItem {
+                domain_name: domain_name(root, &file_path),
                 schema_file_name: file_name.to_string(),
                 schema_name: schema_name.to_string(),
                 schema: schema.clone(),
@@ -337,6 +338,7 @@ fn collect_schema_property(
 // ---------------------------------------------------------------------------
 
 pub struct SchemaItem {
+    domain_name: String,
     schema_file_name: String,
     schema_name: String,
     schema: Schema,
@@ -348,4 +350,27 @@ impl SchemaItem {
         let schema_name = &self.schema_name;
         format!("{schema_file_name}#{schema_name}")
     }
+}
+
+// NOTICE: consider name conversion for redfish schema only.
+
+fn domain_name(root: &Path, file_path: &Path) -> String {
+    let rel_path = file_path.strip_prefix(root).unwrap();
+    let mut schemas = None;
+
+    for name in rel_path.iter() {
+        if schemas.is_some() {
+            return if name == "v1" {
+                "".to_string()
+            } else {
+                name.to_str().unwrap().to_string()
+            };
+        }
+
+        if name == "schemas" {
+            schemas = Some(name);
+        }
+    }
+
+    unreachable!();
 }

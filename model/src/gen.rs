@@ -4,7 +4,7 @@ use openapi_spec_schema::{Schema, SchemaType, SchemaTypes};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
 use std::str::FromStr;
@@ -32,79 +32,125 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
     }
 
     let mut use_modules = vec![];
-    for module_name in module_names(&structs) {
-        if module_name.is_empty() {
-            continue;
-        }
-
-        let module_types = structs
+    for domain_name in domain_names(&structs) {
+        let domain_types = structs
             .iter()
-            .filter(|s| s.module.0 == module_name)
+            .filter(|s| s.domain == domain_name)
             .collect::<Vec<&StructInfo>>();
 
-        let mut token_versions = vec![];
-        for version in versions(&module_types) {
-            if version.is_empty() {
+        let output_domain = output.join(&domain_name);
+        if !domain_name.is_empty() {
+            fs::create_dir(&output_domain)?;
+        }
+
+        let mut domain_modules = vec![];
+        for module_name in module_names(&structs) {
+            if module_name.is_empty() {
                 continue;
             }
 
-            let mut version_types = module_types
+            let module_types = domain_types
                 .iter()
-                .filter(|s| s.module.1 == version)
-                .collect::<Vec<&&StructInfo>>();
+                .filter(|s| s.module.0 == module_name)
+                .copied()
+                .collect::<Vec<&StructInfo>>();
+            if module_types.is_empty() {
+                continue;
+            }
 
-            version_types.sort_unstable_by_key(|&&s| &s.name);
-            let tokens = version_types.iter().map(|s| &s.token);
+            let mut token_versions = vec![];
+            for version in versions(&module_types) {
+                if version.is_empty() {
+                    continue;
+                }
 
-            let version_ident = format_ident!("{version}");
-            token_versions.push(quote! {
-                pub mod #version_ident {
+                let mut version_types = module_types
+                    .iter()
+                    .filter(|s| s.module.1 == version)
+                    .copied()
+                    .collect::<Vec<&StructInfo>>();
+                if version_types.is_empty() {
+                    continue;
+                }
+
+                version_types.sort_unstable_by_key(|s| &s.name);
+                let tokens = version_types.iter().map(|s| &s.token);
+
+                let version_ident = format_ident!("{version}");
+                token_versions.push(quote! {
+                    pub mod #version_ident {
+                        use serde::{Deserialize, Serialize};
+
+                        #(#tokens)*
+                    }
+                });
+            }
+
+            let mut m_types = module_types
+                .iter()
+                .filter(|s| s.module.1.is_empty())
+                .copied()
+                .collect::<Vec<&StructInfo>>();
+
+            let use_stmt = if m_types.is_empty() {
+                quote! {}
+            } else {
+                quote! {
                     use serde::{Deserialize, Serialize};
+                }
+            };
 
+            let token = if m_types.is_empty() {
+                quote! {}
+            } else {
+                m_types.sort_unstable_by_key(|s| &s.name);
+                let tokens = m_types.iter().map(|s| &s.token);
+
+                quote! {
                     #(#tokens)*
                 }
-            });
+            };
+
+            let module_ident = format_ident!("{module_name}");
+            let model = quote! {
+                #use_stmt
+
+                #token
+
+                #(#token_versions)*
+            };
+
+            if domain_name.is_empty() {
+                use_modules.push(quote! {
+                    pub mod #module_ident;
+                });
+            } else {
+                domain_modules.push(quote! {
+                    pub mod #module_ident;
+                });
+            }
+
+            let file_path = output_domain.join(format!("{module_name}.rs"));
+            write_code(&file_path, &model)?;
         }
 
-        let mut m_types = module_types
-            .iter()
-            .filter(|s| s.module.1.is_empty())
-            .collect::<Vec<&&StructInfo>>();
+        // create `mod.rs`
 
-        let use_stmt = if m_types.is_empty() {
-            quote! {}
-        } else {
-            quote! {
-                use serde::{Deserialize, Serialize};
-            }
-        };
+        if !domain_name.is_empty() {
+            let file_path = output_domain.join("mod.rs");
+            let model = quote! {
+                #(#domain_modules)*
+            };
+            write_code(&file_path, &model)?;
 
-        let token = if m_types.is_empty() {
-            quote! {}
-        } else {
-            m_types.sort_unstable_by_key(|s| &s.name);
-            let tokens = m_types.iter().map(|s| &s.token);
-
-            quote! {
-                #(#tokens)*
-            }
-        };
-
-        let module_ident = format_ident!("{module_name}");
-        let model = quote! {
-            #use_stmt
-
-            #token
-
-            #(#token_versions)*
-        };
-        use_modules.push(quote! {
-            pub mod #module_ident;
-        });
-
-        let file_path = output.join(format!("{module_name}.rs"));
-        write_code(&file_path, &model)?;
+            let domain_ident = format_ident!("{domain_name}");
+            use_modules.push(quote! {
+                pub mod #domain_ident;
+            });
+        }
     }
+
+    // create `lib.rs`
 
     let mut s_types = structs
         .iter()
@@ -172,6 +218,7 @@ fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Er
     });
 
     Ok(StructInfo {
+        domain: item.domain_name.clone(),
         module: config.modules_name(&item.schema_name),
         name: struct_name,
         token: quote! {
@@ -192,20 +239,24 @@ fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo,
     for variant_schema in item.schema.any_of.as_ref().unwrap() {
         let r = variant_schema.r#ref.as_deref().unwrap();
         let variant_schema_def = config.get_def_by_url(&item.schema_file_name, r)?;
-        variants.push(variant_schema_def.schema_name.clone());
+        variants.push((
+            variant_schema_def.domain_name.clone(),
+            variant_schema_def.schema_name.clone(),
+        ));
     }
 
-    variants.sort();
+    variants.sort_unstable_by_key(|v| v.1.clone());
 
     let variant_idents = variants.iter().map(|v| {
-        let variant_ident = format_ident!("{}", config.enum_variants_name(v));
-        let ref_ty_ident = config.ref_types_name(v);
+        let variant_ident = format_ident!("{}", config.enum_variants_name(&v.1));
+        let ref_ty_ident = config.ref_types_name(&v.0, &v.1);
         quote! {
             #variant_ident(#ref_ty_ident)
         }
     });
 
     Ok(StructInfo {
+        domain: item.domain_name.clone(),
         module: config.modules_name(&item.schema_name),
         name: struct_name,
         token: quote! {
@@ -241,6 +292,7 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
                 let ty_name_ident = format_ident!("{ty_name}");
 
                 let anonymous = SchemaItem {
+                    domain_name: item.domain_name.clone(),
                     schema_file_name: item.schema_file_name.clone(),
                     schema: prop_schema.clone(),
                     schema_name: ty_name,
@@ -250,7 +302,12 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
 
                 quote! { #ty_name_ident }
             } else {
-                schema_ty(config, &item.schema_file_name, prop_schema)?
+                schema_ty(
+                    config,
+                    &item.domain_name,
+                    &item.schema_file_name,
+                    prop_schema,
+                )?
             };
 
             if !required(&item.schema, prop_name) {
@@ -274,6 +331,7 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
     let token_properties = property_info.iter().map(|p| &p.token);
 
     structs.push(StructInfo {
+        domain: item.domain_name.clone(),
         module: config.modules_name(&item.schema_name),
         name: struct_name,
         token: quote! {
@@ -287,13 +345,18 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
     Ok(structs)
 }
 
-fn schema_ty(config: &Config, file_name: &str, schema: &Schema) -> Result<TokenStream, Error> {
+fn schema_ty(
+    config: &Config,
+    domain: &str,
+    file_name: &str,
+    schema: &Schema,
+) -> Result<TokenStream, Error> {
     match schema.r#type.as_ref() {
         Some(SchemaTypes::Unit(ty)) => match ty {
             SchemaType::Null => panic!("Not supported types."),
             SchemaType::Boolean => Ok(quote! { bool }),
             SchemaType::Object => schema_object_ty(config, file_name, schema),
-            SchemaType::Array => schema_array_ty(config, file_name, schema),
+            SchemaType::Array => schema_array_ty(config, domain, file_name, schema),
             SchemaType::Number => Ok(quote! { f64 }),
             SchemaType::String => Ok(quote! { String }),
             SchemaType::Integer => Ok(quote! { i64 }),
@@ -305,11 +368,12 @@ fn schema_ty(config: &Config, file_name: &str, schema: &Schema) -> Result<TokenS
 
 fn schema_array_ty(
     config: &Config,
+    domain: &str,
     file_name: &str,
     schema: &Schema,
 ) -> Result<TokenStream, Error> {
     let elem_schema = schema.items.as_ref().unwrap();
-    let elem_ty = schema_ty(config, file_name, elem_schema)?;
+    let elem_ty = schema_ty(config, domain, file_name, elem_schema)?;
     Ok(quote! { Vec<#elem_ty> })
 }
 
@@ -321,10 +385,15 @@ fn schema_object_ty(
     let schema_ref = schema.r#ref.as_deref().unwrap();
     let schema_def = config.get_def_by_url(file_name, schema_ref)?;
     if primitive(&schema_def.schema) {
-        return schema_ty(config, &schema_def.schema_file_name, &schema_def.schema);
+        return schema_ty(
+            config,
+            &schema_def.domain_name,
+            &schema_def.schema_file_name,
+            &schema_def.schema,
+        );
     }
 
-    Ok(config.ref_types_name(&schema_def.schema_name))
+    Ok(config.ref_types_name(&schema_def.domain_name, &schema_def.schema_name))
 }
 
 fn anonymous_ty(schema: &Schema) -> bool {
@@ -514,25 +583,32 @@ impl<'a> Config<'a> {
         snake_case(source)
     }
 
-    fn ref_types_name(&self, source: &str) -> TokenStream {
+    fn ref_types_name(&self, domain: &str, source: &str) -> TokenStream {
         let (module, version) = self.modules_name(source);
-        let ty_name = format_ident!("{}", self.types_name(source));
+        let ty_name = self.types_name(source);
 
-        if module.is_empty() {
-            quote! {
-                crate::#ty_name
-            }
-        } else if version.is_empty() {
-            let module_ident = format_ident!("{module}");
-            quote! {
-                crate::#module_ident::#ty_name
-            }
-        } else {
-            let module_ident = format_ident!("{module}");
-            let version_ident = format_ident!("{version}");
-            quote! {
-                crate::#module_ident::#version_ident::#ty_name
-            }
+        let mut type_names = vec!["crate"];
+
+        if !domain.is_empty() {
+            type_names.push(domain);
+        }
+
+        if !module.is_empty() {
+            type_names.push(&module);
+        }
+
+        if !version.is_empty() {
+            type_names.push(&version);
+        }
+
+        if !ty_name.is_empty() {
+            type_names.push(&ty_name);
+        }
+
+        let type_idents = type_names.iter().map(|n| format_ident!("{n}"));
+
+        quote! {
+            #(#type_idents)::*
         }
     }
 }
@@ -540,6 +616,7 @@ impl<'a> Config<'a> {
 // ---------------------------------------------------------------------------
 
 struct StructInfo {
+    domain: String,
     module: (String, String),
     name: String,
     token: TokenStream,
@@ -548,6 +625,17 @@ struct StructInfo {
 struct PropertyInfo {
     name: String,
     token: TokenStream,
+}
+
+fn domain_names(items: &[StructInfo]) -> Vec<String> {
+    let domain_names = items
+        .iter()
+        .map(|s| &s.domain)
+        .collect::<HashSet<&String>>();
+
+    let mut domain_names = domain_names.into_iter().cloned().collect::<Vec<String>>();
+    domain_names.sort();
+    domain_names
 }
 
 fn module_names(items: &[StructInfo]) -> Vec<String> {

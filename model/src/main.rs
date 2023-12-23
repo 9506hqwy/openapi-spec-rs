@@ -13,9 +13,15 @@ use std::path::{Path, PathBuf};
 
 fn main() -> Result<(), Error> {
     let mut args = env::args();
+
     let root = PathBuf::from(
         args.nth(1)
             .ok_or(Error::arg("Specify a directory contains openapi.yaml."))?,
+    );
+
+    let output = PathBuf::from(
+        args.next()
+            .ok_or(Error::arg("Specify a output directory."))?,
     );
 
     let mut schemas = vec![];
@@ -30,9 +36,7 @@ fn main() -> Result<(), Error> {
     }
     */
 
-    let models = gen(&schemas)?;
-
-    println!("{}", models);
+    gen(&output, &schemas)?;
 
     Ok(())
 }

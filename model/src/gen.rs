@@ -4,9 +4,12 @@ use openapi_spec_schema::{Schema, SchemaType, SchemaTypes};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::Path;
 use std::str::FromStr;
 
-pub fn gen(schemas: &[SchemaItem]) -> Result<String, Error> {
+pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
     let config = Config { schemas };
 
     let mut structs = vec![];
@@ -28,7 +31,7 @@ pub fn gen(schemas: &[SchemaItem]) -> Result<String, Error> {
         }
     }
 
-    let mut token_modules = vec![];
+    let mut use_modules = vec![];
     for module_name in module_names(&structs) {
         if module_name.is_empty() {
             continue;
@@ -88,15 +91,19 @@ pub fn gen(schemas: &[SchemaItem]) -> Result<String, Error> {
         };
 
         let module_ident = format_ident!("{module_name}");
-        token_modules.push(quote! {
-            pub mod #module_ident {
-                #use_stmt
+        let model = quote! {
+            #use_stmt
 
-                #token
+            #token
 
-                #(#token_versions)*
-            }
+            #(#token_versions)*
+        };
+        use_modules.push(quote! {
+            pub mod #module_ident;
         });
+
+        let file_path = output.join(format!("{module_name}.rs"));
+        write_code(&file_path, &model)?;
     }
 
     let mut s_types = structs
@@ -124,14 +131,28 @@ pub fn gen(schemas: &[SchemaItem]) -> Result<String, Error> {
     };
 
     let model = quote! {
+        #(#use_modules)*
+
         #use_stmt
 
         #token
-
-        #(#token_modules)*
     };
 
-    Ok(model.to_string())
+    let file_path = output.join("lib.rs");
+    write_code(&file_path, &model)?;
+
+    Ok(())
+}
+
+fn write_code(file_path: &Path, token: &TokenStream) -> Result<(), Error> {
+    let mut file = File::create(file_path)?;
+    let code = token.to_string();
+
+    file.write_all(code.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.flush()?;
+
+    Ok(())
 }
 
 fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Error> {

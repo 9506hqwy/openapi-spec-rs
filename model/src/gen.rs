@@ -401,6 +401,10 @@ fn anonymous_ty(schema: &Schema) -> bool {
 }
 
 fn primitive(schema: &Schema) -> bool {
+    if schema.r#enum.is_some() {
+        return false;
+    }
+
     match schema.r#type.as_ref() {
         Some(SchemaTypes::Unit(ty)) => match ty {
             SchemaType::Null => true,

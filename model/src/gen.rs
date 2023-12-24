@@ -58,7 +58,7 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
 
             let module_types = domain_types
                 .iter()
-                .filter(|s| s.module.0 == module_name)
+                .filter(|s| s.module == module_name)
                 .copied()
                 .collect::<Vec<&StructInfo>>();
             if module_types.is_empty() {
@@ -73,7 +73,7 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
 
                 let mut version_types = module_types
                     .iter()
-                    .filter(|s| s.module.1 == version)
+                    .filter(|s| s.version_str() == version)
                     .copied()
                     .collect::<Vec<&StructInfo>>();
                 if version_types.is_empty() {
@@ -95,7 +95,7 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
 
             let mut m_types = module_types
                 .iter()
-                .filter(|s| s.module.1.is_empty())
+                .filter(|s| s.version_str().is_empty())
                 .copied()
                 .collect::<Vec<&StructInfo>>();
 
@@ -146,7 +146,7 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
         if !domain_name.is_empty() {
             let mut m_types = domain_types
                 .iter()
-                .filter(|s| s.module.0.is_empty())
+                .filter(|s| s.module.is_empty())
                 .copied()
                 .collect::<Vec<&StructInfo>>();
 
@@ -191,7 +191,7 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
     let mut s_types = structs
         .iter()
         .filter(|s| s.domain.is_empty())
-        .filter(|s| s.module.0.is_empty())
+        .filter(|s| s.module.is_empty())
         .collect::<Vec<&StructInfo>>();
 
     let use_stmt = if s_types.is_empty() {
@@ -254,9 +254,12 @@ fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Er
         }
     });
 
+    let (module_name, version) = config.modules_name(&item.schema_name);
+
     Ok(StructInfo {
         domain: item.domain_name.clone(),
-        module: config.modules_name(&item.schema_name),
+        module: module_name,
+        version,
         name: struct_name,
         token: quote! {
             #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -293,9 +296,12 @@ fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo,
         }
     });
 
+    let (module_name, version) = config.modules_name(&item.schema_name);
+
     Ok(StructInfo {
         domain: item.domain_name.clone(),
-        module: config.modules_name(&item.schema_name),
+        module: module_name,
+        version,
         name: struct_name,
         token: quote! {
             #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -367,9 +373,12 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
     property_info.sort_unstable_by_key(|p| p.name.clone());
     let token_properties = property_info.iter().map(|p| &p.token);
 
+    let (module_name, version) = config.modules_name(&item.schema_name);
+
     structs.push(StructInfo {
         domain: item.domain_name.clone(),
-        module: config.modules_name(&item.schema_name),
+        module: module_name,
+        version,
         name: struct_name,
         token: quote! {
             #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -621,16 +630,22 @@ impl<'a> Config<'a> {
         }
     }
 
-    fn modules_name(&self, source: &str) -> (String, String) {
+    fn modules_name(&self, source: &str) -> (String, Option<(u8, u8, u8)>) {
         let (value, _) = source.rsplit_once('_').unwrap_or_default();
-        let (module, version) = value.split_once('_').unwrap_or((value, ""));
+        let (module, version_str) = value.split_once('_').unwrap_or((value, ""));
 
-        let mut version = version.to_string();
-        if !version.is_empty() && !version.starts_with('v') {
-            version = format!("v{version}")
+        let mut version = None;
+        if !version_str.is_empty() {
+            let mut v = version_str
+                .strip_prefix('v')
+                .unwrap_or(version_str)
+                .splitn(3, '_')
+                .map(u8::from_str)
+                .map(|v| v.unwrap());
+            version = Some((v.next().unwrap(), v.next().unwrap(), v.next().unwrap()));
         }
 
-        (snake_case(module), snake_case(&version))
+        (snake_case(module), version)
     }
 
     fn types_name(&self, source: &str) -> String {
@@ -650,22 +665,22 @@ impl<'a> Config<'a> {
         let (module, version) = self.modules_name(source);
         let ty_name = self.types_name(source);
 
-        let mut type_names = vec!["crate"];
+        let mut type_names = vec!["crate".to_string()];
 
         if !domain.is_empty() {
-            type_names.push(domain);
+            type_names.push(domain.to_string());
         }
 
         if !module.is_empty() {
-            type_names.push(&module);
+            type_names.push(module);
         }
 
-        if !version.is_empty() {
-            type_names.push(&version);
+        if let Some(v) = version {
+            type_names.push(format!("v{}_{}_{}", v.0, v.1, v.2));
         }
 
         if !ty_name.is_empty() {
-            type_names.push(&ty_name);
+            type_names.push(ty_name);
         }
 
         let type_idents = type_names.iter().map(|n| format_ident!("{n}"));
@@ -680,9 +695,26 @@ impl<'a> Config<'a> {
 
 struct StructInfo {
     domain: String,
-    module: (String, String),
+    module: String,
+    version: Option<(u8, u8, u8)>,
     name: String,
     token: TokenStream,
+}
+
+impl StructInfo {
+    fn version_num(&self) -> u32 {
+        match self.version {
+            Some(v) => (v.0 as u32) * 10000 + (v.1 as u32) * 100 + (v.2 as u32),
+            _ => 0,
+        }
+    }
+
+    fn version_str(&self) -> String {
+        match self.version {
+            Some(v) => format!("v{}_{}_{}", v.0, v.1, v.2),
+            _ => "".to_string(),
+        }
+    }
 }
 
 struct PropertyInfo {
@@ -704,7 +736,7 @@ fn domain_names(items: &[StructInfo]) -> Vec<String> {
 fn module_names(items: &[StructInfo]) -> Vec<String> {
     let module_names = items
         .iter()
-        .map(|s| &s.module.0)
+        .map(|s| &s.module)
         .collect::<HashSet<&String>>();
 
     let mut module_names = module_names.into_iter().cloned().collect::<Vec<String>>();
@@ -715,10 +747,15 @@ fn module_names(items: &[StructInfo]) -> Vec<String> {
 fn versions(items: &[&StructInfo]) -> Vec<String> {
     let versions = items
         .iter()
-        .map(|&s| &s.module.1)
-        .collect::<HashSet<&String>>();
+        .map(|&s| (s.version_num(), s.version_str()))
+        .collect::<Vec<(u32, String)>>();
 
-    let mut versions = versions.into_iter().cloned().collect::<Vec<String>>();
-    versions.sort();
-    versions
+    let keys = versions.iter().map(|v| v.0).collect::<HashSet<u32>>();
+
+    let mut keys = keys.into_iter().collect::<Vec<u32>>();
+    keys.sort();
+
+    keys.iter()
+        .map(|&k| versions.iter().find(|v| v.0 == k).unwrap().1.clone())
+        .collect::<Vec<String>>()
 }

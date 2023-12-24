@@ -13,6 +13,7 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
     let config = Config { schemas };
 
     let mut structs = vec![];
+    let mut progress = 0usize;
     for item in config.schemas {
         if item.schema.all_of.is_some() {
             panic!("Not supported `allOf`.");
@@ -28,6 +29,12 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
             structs.push(gen_unit_variant(&config, item)?);
         } else if !primitive(&item.schema) {
             structs.append(&mut gen_struct(&config, item)?);
+        }
+
+        let percentage = structs.len() * 100 / config.schemas.len();
+        if progress != percentage {
+            progress = percentage;
+            println!("Generated {}%", progress);
         }
     }
 
@@ -137,9 +144,38 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
         // create `mod.rs`
 
         if !domain_name.is_empty() {
+            let mut m_types = domain_types
+                .iter()
+                .filter(|s| s.module.0.is_empty())
+                .copied()
+                .collect::<Vec<&StructInfo>>();
+
+            let use_stmt = if m_types.is_empty() {
+                quote! {}
+            } else {
+                quote! {
+                    use serde::{Deserialize, Serialize};
+                }
+            };
+
+            let token = if m_types.is_empty() {
+                quote! {}
+            } else {
+                m_types.sort_unstable_by_key(|s| &s.name);
+                let tokens = m_types.iter().map(|s| &s.token);
+
+                quote! {
+                    #(#tokens)*
+                }
+            };
+
             let file_path = output_domain.join("mod.rs");
             let model = quote! {
                 #(#domain_modules)*
+
+                #use_stmt
+
+                #token
             };
             write_code(&file_path, &model)?;
 
@@ -154,6 +190,7 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
 
     let mut s_types = structs
         .iter()
+        .filter(|s| s.domain.is_empty())
         .filter(|s| s.module.0.is_empty())
         .collect::<Vec<&StructInfo>>();
 
@@ -238,7 +275,8 @@ fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo,
     let mut variants = vec![];
     for variant_schema in item.schema.any_of.as_ref().unwrap() {
         let r = variant_schema.r#ref.as_deref().unwrap();
-        let variant_schema_def = config.get_def_by_url(&item.schema_file_name, r)?;
+        let variant_schema_def =
+            config.get_def_by_url(&item.domain_name, &item.schema_file_name, r)?;
         variants.push((
             variant_schema_def.domain_name.clone(),
             variant_schema_def.schema_name.clone(),
@@ -287,20 +325,19 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
             };
 
             let mut field_ty = if anonymous_ty(prop_schema) {
-                // join '-' because of splitting '_' for name conversion using `Config` struct.
-                let ty_name = config.types_name(&format!("{struct_name}-{prop_name}"));
-                let ty_name_ident = format_ident!("{ty_name}");
+                let schema_name = &item.schema_name;
 
                 let anonymous = SchemaItem {
                     domain_name: item.domain_name.clone(),
                     schema_file_name: item.schema_file_name.clone(),
                     schema: prop_schema.clone(),
-                    schema_name: ty_name,
+                    // join '-' because of splitting '_' for name conversion using `Config` struct.
+                    schema_name: format!("{schema_name}-{prop_name}"),
                 };
 
                 structs.append(&mut gen_struct(config, &anonymous)?);
 
-                quote! { #ty_name_ident }
+                config.ref_types_name(&anonymous.domain_name, &anonymous.schema_name)
             } else {
                 schema_ty(
                     config,
@@ -355,13 +392,13 @@ fn schema_ty(
         Some(SchemaTypes::Unit(ty)) => match ty {
             SchemaType::Null => panic!("Not supported types."),
             SchemaType::Boolean => Ok(quote! { bool }),
-            SchemaType::Object => schema_object_ty(config, file_name, schema),
+            SchemaType::Object => schema_object_ty(config, domain, file_name, schema),
             SchemaType::Array => schema_array_ty(config, domain, file_name, schema),
             SchemaType::Number => Ok(quote! { f64 }),
             SchemaType::String => Ok(quote! { String }),
             SchemaType::Integer => Ok(quote! { i64 }),
         },
-        None if schema.r#ref.is_some() => schema_object_ty(config, file_name, schema),
+        None if schema.r#ref.is_some() => schema_object_ty(config, domain, file_name, schema),
         _ => panic!("Not supported types."),
     }
 }
@@ -379,11 +416,12 @@ fn schema_array_ty(
 
 fn schema_object_ty(
     config: &Config,
+    domain: &str,
     file_name: &str,
     schema: &Schema,
 ) -> Result<TokenStream, Error> {
     let schema_ref = schema.r#ref.as_deref().unwrap();
-    let schema_def = config.get_def_by_url(file_name, schema_ref)?;
+    let schema_def = config.get_def_by_url(domain, file_name, schema_ref)?;
     if primitive(&schema_def.schema) {
         return schema_ty(
             config,
@@ -557,21 +595,42 @@ impl<'a> Config<'a> {
             .ok_or(Error::not_found_schema(r))
     }
 
-    fn get_def_by_url(&self, file_name: &str, uri: &str) -> Result<&'a SchemaItem, Error> {
+    fn get_def_by_url(
+        &self,
+        domain_name: &str,
+        file_name: &str,
+        uri: &str,
+    ) -> Result<&'a SchemaItem, Error> {
         let (url, component) = uri.rsplit_once('#').ok_or(Error::invalid_uri(uri))?;
+        let domain_name = self.domain(url, domain_name);
         let (_, file_name) = url.rsplit_once('/').unwrap_or(("", file_name));
         let (_, schema_name) = component
             .rsplit_once('/')
             .ok_or(Error::invalid_component_path(uri))?;
-        self.get_def_by_ref(&format!("{file_name}#{schema_name}"))
+        self.get_def_by_ref(&format!("{domain_name}/{file_name}#{schema_name}"))
     }
 
     // NOTICE: consider name conversion for redfish schema only.
 
+    fn domain(&self, url: &str, domain_name: &str) -> String {
+        let domain_name = url.split('/').nth(4).unwrap_or(domain_name);
+        if domain_name == "v1" {
+            "".to_string()
+        } else {
+            domain_name.to_string()
+        }
+    }
+
     fn modules_name(&self, source: &str) -> (String, String) {
         let (value, _) = source.rsplit_once('_').unwrap_or_default();
         let (module, version) = value.split_once('_').unwrap_or((value, ""));
-        (snake_case(module), snake_case(version))
+
+        let mut version = version.to_string();
+        if !version.is_empty() && !version.starts_with('v') {
+            version = format!("v{version}")
+        }
+
+        (snake_case(module), snake_case(&version))
     }
 
     fn types_name(&self, source: &str) -> String {

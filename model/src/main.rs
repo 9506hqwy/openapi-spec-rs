@@ -17,16 +17,20 @@ fn main() -> Result<(), Error> {
     let root = PathBuf::from(
         args.nth(1)
             .ok_or(Error::arg("Specify a directory contains openapi.yaml."))?,
-    );
+    )
+    .canonicalize()?;
 
     let output = PathBuf::from(
         args.next()
             .ok_or(Error::arg("Specify a output directory."))?,
-    );
+    )
+    .canonicalize()?;
 
+    let mut scaned_files = vec![];
     let mut schemas = vec![];
 
-    collect_dir(&root, &root, &mut schemas)?;
+    println!("Schema collecting...");
+    collect_dir(&root, &root, &mut scaned_files, &mut schemas)?;
 
     schemas.sort_unstable_by_key(|s| s.r#ref());
 
@@ -36,6 +40,7 @@ fn main() -> Result<(), Error> {
     }
     */
 
+    println!("Source Code Generating...");
     gen(&output, &schemas)?;
 
     Ok(())
@@ -91,14 +96,19 @@ fn from_part_yml(content: &str) -> Result<PartOpenApi, Error> {
     Ok(serde_yaml::from_str::<PartOpenApi>(content)?)
 }
 
-fn collect_dir(root: &Path, dir: &Path, schemas: &mut Vec<SchemaItem>) -> Result<(), Error> {
+fn collect_dir(
+    root: &Path,
+    dir: &Path,
+    scaned_files: &mut Vec<PathBuf>,
+    schemas: &mut Vec<SchemaItem>,
+) -> Result<(), Error> {
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
 
         if path.is_file() && path.file_name().unwrap().to_str().unwrap() == "openapi.yaml" {
-            collect_schemas(root, &path, schemas)?;
+            collect_schemas(root, &path, scaned_files, schemas)?;
         } else if path.is_dir() {
-            collect_dir(root, &path, schemas)?;
+            collect_dir(root, &path, scaned_files, schemas)?;
         }
     }
 
@@ -108,6 +118,7 @@ fn collect_dir(root: &Path, dir: &Path, schemas: &mut Vec<SchemaItem>) -> Result
 fn collect_schemas(
     root: &Path,
     entry_file: &Path,
+    scaned_files: &mut Vec<PathBuf>,
     schemas: &mut Vec<SchemaItem>,
 ) -> Result<(), Error> {
     let model = read_openapi(entry_file)?;
@@ -115,35 +126,51 @@ fn collect_schemas(
     if let Some(paths) = model.paths {
         for (path, item) in paths.values {
             if let Some(op) = item.get {
-                collect_schema(root, entry_file, &path, "GET", &op, schemas)?;
+                collect_schema(root, entry_file, &path, "GET", &op, scaned_files, schemas)?;
             }
 
             if let Some(op) = item.put {
-                collect_schema(root, entry_file, &path, "PUT", &op, schemas)?;
+                collect_schema(root, entry_file, &path, "PUT", &op, scaned_files, schemas)?;
             }
 
             if let Some(op) = item.post {
-                collect_schema(root, entry_file, &path, "POST", &op, schemas)?;
+                collect_schema(root, entry_file, &path, "POST", &op, scaned_files, schemas)?;
             }
 
             if let Some(op) = item.delete {
-                collect_schema(root, entry_file, &path, "DELETE", &op, schemas)?;
+                collect_schema(
+                    root,
+                    entry_file,
+                    &path,
+                    "DELETE",
+                    &op,
+                    scaned_files,
+                    schemas,
+                )?;
             }
 
             if let Some(op) = item.options {
-                collect_schema(root, entry_file, &path, "OPTIONS", &op, schemas)?;
+                collect_schema(
+                    root,
+                    entry_file,
+                    &path,
+                    "OPTIONS",
+                    &op,
+                    scaned_files,
+                    schemas,
+                )?;
             }
 
             if let Some(op) = item.head {
-                collect_schema(root, entry_file, &path, "HEAD", &op, schemas)?;
+                collect_schema(root, entry_file, &path, "HEAD", &op, scaned_files, schemas)?;
             }
 
             if let Some(op) = item.patch {
-                collect_schema(root, entry_file, &path, "PATCH", &op, schemas)?;
+                collect_schema(root, entry_file, &path, "PATCH", &op, scaned_files, schemas)?;
             }
 
             if let Some(op) = item.trace {
-                collect_schema(root, entry_file, &path, "TRACE", &op, schemas)?;
+                collect_schema(root, entry_file, &path, "TRACE", &op, scaned_files, schemas)?;
             }
         }
     }
@@ -157,33 +184,50 @@ fn collect_schema(
     path: &str,
     method: &str,
     op: &Operation,
+    scaned_files: &mut Vec<PathBuf>,
     schemas: &mut Vec<SchemaItem>,
 ) -> Result<(), Error> {
     if let Some(req) = &op.request_body {
         match req {
             ReferenceOr::Value(v) => {
-                collect_request_schema(root, entry_file, path, method, v, schemas)?
+                collect_request_schema(root, entry_file, path, method, v, scaned_files, schemas)?
             }
-            ReferenceOr::Ref(r) => collect_reference(root, entry_file, &r.r#ref, schemas)?,
+            ReferenceOr::Ref(r) => {
+                collect_reference(root, entry_file, &r.r#ref, true, scaned_files, schemas)?
+            }
         }
     }
 
     if let Some(res) = &op.responses {
         if let Some(default) = &res.r#default {
             match default {
-                ReferenceOr::Value(v) => {
-                    collect_response_schema(root, entry_file, path, method, &0, v, schemas)?
+                ReferenceOr::Value(v) => collect_response_schema(
+                    root,
+                    entry_file,
+                    (path, method, &0),
+                    v,
+                    scaned_files,
+                    schemas,
+                )?,
+                ReferenceOr::Ref(r) => {
+                    collect_reference(root, entry_file, &r.r#ref, true, scaned_files, schemas)?
                 }
-                ReferenceOr::Ref(r) => collect_reference(root, entry_file, &r.r#ref, schemas)?,
             }
         }
 
         for (status, item) in &res.statuses.values {
             match item {
-                ReferenceOr::Value(v) => {
-                    collect_response_schema(root, entry_file, path, method, status, v, schemas)?
+                ReferenceOr::Value(v) => collect_response_schema(
+                    root,
+                    entry_file,
+                    (path, method, status),
+                    v,
+                    scaned_files,
+                    schemas,
+                )?,
+                ReferenceOr::Ref(r) => {
+                    collect_reference(root, entry_file, &r.r#ref, true, scaned_files, schemas)?
                 }
-                ReferenceOr::Ref(r) => collect_reference(root, entry_file, &r.r#ref, schemas)?,
             }
         }
     }
@@ -197,6 +241,7 @@ fn collect_request_schema(
     path: &str,
     method: &str,
     req: &RequestBody,
+    scaned_files: &mut Vec<PathBuf>,
     schemas: &mut Vec<SchemaItem>,
 ) -> Result<(), Error> {
     for item in req.content.values() {
@@ -207,7 +252,7 @@ fn collect_request_schema(
             }
 
             let r = schema.r#ref.as_ref().unwrap();
-            collect_reference(root, entry_file, r, schemas)?;
+            collect_reference(root, entry_file, r, true, scaned_files, schemas)?;
         }
     }
 
@@ -217,22 +262,24 @@ fn collect_request_schema(
 fn collect_response_schema(
     root: &Path,
     entry_file: &Path,
-    path: &str,
-    method: &str,
-    status: &u16,
+    status: (&str, &str, &u16),
     res: &Response,
+    scaned_files: &mut Vec<PathBuf>,
     schemas: &mut Vec<SchemaItem>,
 ) -> Result<(), Error> {
     if let Some(contents) = &res.content {
         for item in contents.values() {
             if let Some(schema) = &item.schema {
                 if schema.r#ref.is_none() {
-                    eprintln!("Not supported response. {} {} {}", method, status, path);
+                    eprintln!(
+                        "Not supported response. {} {} {}",
+                        status.1, status.2, status.0
+                    );
                     return Ok(());
                 }
 
                 let r = schema.r#ref.as_ref().unwrap();
-                collect_reference(root, entry_file, r, schemas)?;
+                collect_reference(root, entry_file, r, true, scaned_files, schemas)?;
             }
         }
     }
@@ -244,6 +291,8 @@ fn collect_reference(
     root: &Path,
     entry_file: &Path,
     r: &str,
+    another_file: bool,
+    scaned_files: &mut Vec<PathBuf>,
     schemas: &mut Vec<SchemaItem>,
 ) -> Result<(), Error> {
     let (url, component) = r.split_once('#').unwrap();
@@ -252,52 +301,75 @@ fn collect_reference(
         PathBuf::from(entry_file)
     } else {
         let path = url.splitn(4, '/').last().unwrap();
-        root.join(path)
+        root.join(path).canonicalize()?
     };
+
+    let domain = domain_name(root, &file_path);
 
     let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap();
 
     let (_, schema_name) = component.rsplit_once('/').unwrap();
 
-    let schema_ref = format!("{file_name}#{schema_name}");
+    let schema_ref = format!("{domain}/{file_name}#{schema_name}");
 
     if schemas.iter().any(|i| i.r#ref() == schema_ref) {
         return Ok(());
     }
 
-    match read_part_openapi(&file_path) {
-        Ok(model) => {
-            let schema = model
-                .components
-                .as_ref()
-                .ok_or(Error::arg(&format!("Not found components {schema_ref}")))?
-                .schemas
-                .as_ref()
-                .ok_or(Error::arg(&format!("Not found schemas {schema_ref}")))?
-                .get(schema_name)
-                .ok_or(Error::arg(&format!("Not found schema {schema_ref}")))?;
+    for version in all_version(&file_path, another_file)? {
+        if !scaned_files.contains(&version) {
+            scaned_files.push(version.clone());
+            println!("scanning {:?} {}", &version, scaned_files.len());
+            match read_part_openapi(&version) {
+                Ok(model) => {
+                    for (schema_name, schema) in model
+                        .components
+                        .as_ref()
+                        .ok_or(Error::arg(&format!("Not found components {schema_ref}")))?
+                        .schemas
+                        .as_ref()
+                        .ok_or(Error::arg(&format!("Not found schemas {schema_ref}")))?
+                    {
+                        let file_name = version.file_name().and_then(|n| n.to_str()).unwrap();
 
-            let item = SchemaItem {
-                domain_name: domain_name(root, &file_path),
-                schema_file_name: file_name.to_string(),
-                schema_name: schema_name.to_string(),
-                schema: schema.clone(),
-            };
+                        let item = SchemaItem {
+                            domain_name: domain_name(root, &version),
+                            schema_file_name: file_name.to_string(),
+                            schema_name: schema_name.to_string(),
+                            schema: schema.clone(),
+                        };
 
-            schemas.push(item);
+                        schemas.push(item);
 
-            collect_schema_property(root, &file_path, schema, schemas)?;
+                        collect_schema_property(
+                            root,
+                            &version,
+                            schema,
+                            false,
+                            scaned_files,
+                            schemas,
+                        )?;
 
-            if let Some(any_of) = schema.any_of.as_ref() {
-                for s in any_of {
-                    if let Some(r) = s.r#ref.as_ref() {
-                        collect_reference(root, entry_file, r, schemas)?;
+                        if let Some(any_of) = schema.any_of.as_ref() {
+                            for s in any_of {
+                                if let Some(r) = s.r#ref.as_ref() {
+                                    collect_reference(
+                                        root,
+                                        &version,
+                                        r,
+                                        false,
+                                        scaned_files,
+                                        schemas,
+                                    )?;
+                                }
+                            }
+                        }
                     }
                 }
+                _ => {
+                    eprintln!("Failed to read {:?}", &version);
+                }
             }
-        }
-        _ => {
-            eprintln!("Failed to read {:?}", &file_path);
         }
     }
 
@@ -308,24 +380,33 @@ fn collect_schema_property(
     root: &Path,
     entry_file: &Path,
     entry: &Schema,
+    another_file: bool,
+    scaned_files: &mut Vec<PathBuf>,
     schemas: &mut Vec<SchemaItem>,
 ) -> Result<(), Error> {
     if let Some(properties) = entry.properties.as_ref() {
         for property in properties.values() {
             if let Some(r) = property.r#ref.as_ref() {
-                collect_reference(root, entry_file, r, schemas)?;
+                collect_reference(root, entry_file, r, another_file, scaned_files, schemas)?;
             }
 
             if let Some(i) = property.items.as_ref() {
                 if let Some(r) = i.r#ref.as_ref() {
-                    collect_reference(root, entry_file, r, schemas)?;
+                    collect_reference(root, entry_file, r, another_file, scaned_files, schemas)?;
                 }
             }
 
             if let Some(any_of) = property.any_of.as_ref() {
                 for s in any_of {
                     if let Some(r) = s.r#ref.as_ref() {
-                        collect_reference(root, entry_file, r, schemas)?;
+                        collect_reference(
+                            root,
+                            entry_file,
+                            r,
+                            another_file,
+                            scaned_files,
+                            schemas,
+                        )?;
                     }
                 }
             }
@@ -346,13 +427,43 @@ pub struct SchemaItem {
 
 impl SchemaItem {
     fn r#ref(&self) -> String {
+        let domain_name = &self.domain_name;
         let schema_file_name = &self.schema_file_name;
         let schema_name = &self.schema_name;
-        format!("{schema_file_name}#{schema_name}")
+        format!("{domain_name}/{schema_file_name}#{schema_name}")
     }
 }
 
 // NOTICE: consider name conversion for redfish schema only.
+
+// TODO: missing http://redfish.dmtf.org/schemas/v1/PhysicalContext.v1_0_0.yaml
+// TODO: missing http://redfish.dmtf.org/schemas/swordfish/v1/EndpointGroup.yaml
+
+fn all_version(path: &Path, _another_file: bool) -> Result<Vec<PathBuf>, Error> {
+    let versions = vec![PathBuf::from(path).canonicalize()?];
+
+    /*
+    let file_name = path.file_stem().and_then(|f| f.to_str()).unwrap();
+    let (schema, version) = file_name.split_once('.').unwrap_or((file_name, ""));
+
+    if another_file && !version.is_empty() {
+        for entry in path.parent().unwrap().read_dir()? {
+            let tmp_path = entry?.path();
+            if tmp_path.is_file() {
+                let tmp_file_name = tmp_path.file_stem().and_then(|f| f.to_str()).unwrap();
+                let (tmp_schema, tmp_version) =
+                    tmp_file_name.split_once('.').unwrap_or((tmp_file_name, ""));
+
+                if schema == tmp_schema && version != tmp_version && !tmp_version.is_empty() {
+                    versions.push(tmp_path.canonicalize()?);
+                }
+            }
+        }
+    }
+    */
+
+    Ok(versions)
+}
 
 fn domain_name(root: &Path, file_path: &Path) -> String {
     let rel_path = file_path.strip_prefix(root).unwrap();

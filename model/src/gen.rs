@@ -280,17 +280,25 @@ fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo,
         let r = variant_schema.r#ref.as_deref().unwrap();
         let variant_schema_def =
             config.get_def_by_url(&item.domain_name, &item.schema_file_name, r)?;
+        let (_, version) = config.modules_name(&variant_schema_def.schema_name);
         variants.push((
+            version_num(version),
             variant_schema_def.domain_name.clone(),
             variant_schema_def.schema_name.clone(),
         ));
     }
 
-    variants.sort_unstable_by_key(|v| v.1.clone());
+    variants.sort_unstable_by_key(|v| v.0);
+    variants.reverse();
 
     let variant_idents = variants.iter().map(|v| {
-        let variant_ident = format_ident!("{}", config.enum_variants_name(&v.1));
-        let ref_ty_ident = config.ref_types_name(&v.0, &v.1);
+        let variant_name = if v.0 == 0 {
+            config.enum_variants_name(&v.2)
+        } else {
+            config.enum_variants_name(&format!("v{:06}", v.0))
+        };
+        let variant_ident = format_ident!("{}", variant_name);
+        let ref_ty_ident = config.ref_types_name(&v.1, &v.2);
         quote! {
             #variant_ident(#ref_ty_ident)
         }
@@ -703,10 +711,7 @@ struct StructInfo {
 
 impl StructInfo {
     fn version_num(&self) -> u32 {
-        match self.version {
-            Some(v) => (v.0 as u32) * 10000 + (v.1 as u32) * 100 + (v.2 as u32),
-            _ => 0,
-        }
+        version_num(self.version)
     }
 
     fn version_str(&self) -> String {
@@ -720,6 +725,13 @@ impl StructInfo {
 struct PropertyInfo {
     name: String,
     token: TokenStream,
+}
+
+fn version_num(version: Option<(u8, u8, u8)>) -> u32 {
+    match version {
+        Some(v) => (v.0 as u32) * 10000 + (v.1 as u32) * 100 + (v.2 as u32),
+        _ => 0,
+    }
 }
 
 fn domain_names(items: &[StructInfo]) -> Vec<String> {

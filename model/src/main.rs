@@ -439,10 +439,9 @@ impl SchemaItem {
 // TODO: missing http://redfish.dmtf.org/schemas/v1/PhysicalContext.v1_0_0.yaml
 // TODO: missing http://redfish.dmtf.org/schemas/swordfish/v1/EndpointGroup.yaml
 
-fn all_version(path: &Path, _another_file: bool) -> Result<Vec<PathBuf>, Error> {
-    let versions = vec![PathBuf::from(path).canonicalize()?];
+fn all_version(path: &Path, another_file: bool) -> Result<Vec<PathBuf>, Error> {
+    let mut versions = vec![PathBuf::from(path).canonicalize()?];
 
-    /*
     let file_name = path.file_stem().and_then(|f| f.to_str()).unwrap();
     let (schema, version) = file_name.split_once('.').unwrap_or((file_name, ""));
 
@@ -454,13 +453,12 @@ fn all_version(path: &Path, _another_file: bool) -> Result<Vec<PathBuf>, Error> 
                 let (tmp_schema, tmp_version) =
                     tmp_file_name.split_once('.').unwrap_or((tmp_file_name, ""));
 
-                if schema == tmp_schema && version != tmp_version && !tmp_version.is_empty() {
+                if schema == tmp_schema && tmp_version.is_empty() {
                     versions.push(tmp_path.canonicalize()?);
                 }
             }
         }
     }
-    */
 
     Ok(versions)
 }

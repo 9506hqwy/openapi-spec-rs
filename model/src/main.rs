@@ -4,7 +4,8 @@ mod gen;
 use self::error::Error;
 use self::gen::gen;
 use openapi_spec_schema::{
-    OpenApi, Operation, PartOpenApi, ReferenceOr, RequestBody, Response, Schema,
+    OpenApi, Operation, PartOpenApi, ReferenceOr, RequestBody, Response, Schema, SchemaType,
+    SchemaTypes,
 };
 use std::env;
 use std::fs::{self, File};
@@ -341,6 +342,10 @@ fn collect_reference(
 
                         schemas.push(item);
 
+                        if let Some(r) = schema.r#ref.as_ref() {
+                            collect_reference(root, &version, r, false, scaned_files, schemas)?;
+                        }
+
                         collect_schema_property(
                             root,
                             &version,
@@ -410,10 +415,25 @@ fn collect_schema_property(
                     }
                 }
             }
+
+            if anonymous_ty(property) {
+                collect_schema_property(
+                    root,
+                    entry_file,
+                    property,
+                    another_file,
+                    scaned_files,
+                    schemas,
+                )?;
+            }
         }
     }
 
     Ok(())
+}
+
+fn anonymous_ty(schema: &Schema) -> bool {
+    schema.r#type == Some(SchemaTypes::Unit(SchemaType::Object)) && schema.r#ref.is_none()
 }
 
 // ---------------------------------------------------------------------------

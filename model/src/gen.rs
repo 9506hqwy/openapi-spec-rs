@@ -1,5 +1,5 @@
 use super::error::Error;
-use super::SchemaItem;
+use super::{anonymous_ty, SchemaItem};
 use openapi_spec_schema::{Schema, SchemaType, SchemaTypes};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -449,10 +449,6 @@ fn schema_object_ty(
     }
 
     Ok(config.ref_types_name(&schema_def.domain_name, &schema_def.schema_name))
-}
-
-fn anonymous_ty(schema: &Schema) -> bool {
-    schema.r#type == Some(SchemaTypes::Unit(SchemaType::Object)) && schema.r#ref.is_none()
 }
 
 fn primitive(schema: &Schema) -> bool {

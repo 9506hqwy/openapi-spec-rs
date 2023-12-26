@@ -23,7 +23,9 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
             panic!("Not supported `oneOf`.");
         }
 
-        if item.schema.any_of.is_some() {
+        if item.schema.r#ref.is_some() {
+            structs.push(get_type_alias(&config, item)?);
+        } else if item.schema.any_of.is_some() {
             structs.push(gen_newtype_variant(&config, item)?);
         } else if item.schema.r#enum.is_some() {
             structs.push(gen_unit_variant(&config, item)?);
@@ -99,12 +101,12 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
                 .copied()
                 .collect::<Vec<&StructInfo>>();
 
-            let use_stmt = if m_types.is_empty() {
-                quote! {}
-            } else {
+            let use_stmt = if m_types.iter().any(|t| t.use_serde) {
                 quote! {
                     use serde::{Deserialize, Serialize};
                 }
+            } else {
+                quote! {}
             };
 
             let token = if m_types.is_empty() {
@@ -150,12 +152,12 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
                 .copied()
                 .collect::<Vec<&StructInfo>>();
 
-            let use_stmt = if m_types.is_empty() {
-                quote! {}
-            } else {
+            let use_stmt = if m_types.iter().any(|t| t.use_serde) {
                 quote! {
                     use serde::{Deserialize, Serialize};
                 }
+            } else {
+                quote! {}
             };
 
             let token = if m_types.is_empty() {
@@ -194,12 +196,12 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
         .filter(|s| s.module.is_empty())
         .collect::<Vec<&StructInfo>>();
 
-    let use_stmt = if s_types.is_empty() {
-        quote! {}
-    } else {
+    let use_stmt = if s_types.iter().any(|t| t.use_serde) {
         quote! {
             use serde::{Deserialize, Serialize};
         }
+    } else {
+        quote! {}
     };
 
     let token = if s_types.is_empty() {
@@ -238,6 +240,29 @@ fn write_code(file_path: &Path, token: &TokenStream) -> Result<(), Error> {
     Ok(())
 }
 
+fn get_type_alias(config: &Config, item: &SchemaItem) -> Result<StructInfo, Error> {
+    let struct_name = config.types_name(&item.schema_name);
+    let struct_ident = format_ident!("{struct_name}");
+
+    let r = item.schema.r#ref.as_deref().unwrap();
+    let ty_item = config.get_def_by_url(&item.domain_name, &item.schema_file_name, r)?;
+
+    let ty_token = config.ref_types_name(&ty_item.domain_name, &ty_item.schema_name);
+
+    let (module_name, version) = config.modules_name(&item.schema_name);
+
+    Ok(StructInfo {
+        domain: item.domain_name.clone(),
+        module: module_name,
+        version,
+        name: struct_name,
+        token: quote! {
+            pub type #struct_ident = #ty_token;
+        },
+        use_serde: false,
+    })
+}
+
 fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Error> {
     let struct_name = config.types_name(&item.schema_name);
     let struct_ident = format_ident!("{struct_name}");
@@ -268,6 +293,7 @@ fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Er
                 #(#variant_idents),*
             }
         },
+        use_serde: true,
     })
 }
 
@@ -318,6 +344,7 @@ fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo,
                 #(#variant_idents),*
             }
         },
+        use_serde: true,
     })
 }
 
@@ -394,6 +421,7 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
                 #(#token_properties),*
             }
         },
+        use_serde: true,
     });
 
     Ok(structs)
@@ -703,6 +731,7 @@ struct StructInfo {
     version: Option<(u8, u8, u8)>,
     name: String,
     token: TokenStream,
+    use_serde: bool,
 }
 
 impl StructInfo {

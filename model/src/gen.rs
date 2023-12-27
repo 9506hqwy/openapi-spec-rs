@@ -367,23 +367,17 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
 
             let mut field_ty = if anonymous_ty(prop_schema) {
                 let schema_name = &item.schema_name;
+                let property_name = format!("{schema_name}-{prop_name}");
+                let property_def = config.get_def_by_name(&item.domain_name, &property_name)?;
 
-                let anonymous = SchemaItem {
-                    domain_name: item.domain_name.clone(),
-                    schema_file_name: item.schema_file_name.clone(),
-                    schema: prop_schema.clone(),
-                    // join '-' because of splitting '_' for name conversion using `Config` struct.
-                    schema_name: format!("{schema_name}-{prop_name}"),
-                };
-
-                structs.append(&mut gen_struct(config, &anonymous)?);
-
-                config.ref_types_name(&anonymous.domain_name, &anonymous.schema_name)
+                config.ref_types_name(&property_def.domain_name, &property_def.schema_name)
             } else {
                 schema_ty(
                     config,
                     &item.domain_name,
                     &item.schema_file_name,
+                    &struct_name,
+                    prop_name,
                     prop_schema,
                 )?
             };
@@ -431,19 +425,25 @@ fn schema_ty(
     config: &Config,
     domain: &str,
     file_name: &str,
+    struct_name: &str,
+    prop_name: &str,
     schema: &Schema,
 ) -> Result<TokenStream, Error> {
     match schema.r#type.as_ref() {
         Some(SchemaTypes::Unit(ty)) => match ty {
             SchemaType::Null => panic!("Not supported types."),
             SchemaType::Boolean => Ok(quote! { bool }),
-            SchemaType::Object => schema_object_ty(config, domain, file_name, schema),
-            SchemaType::Array => schema_array_ty(config, domain, file_name, schema),
+            SchemaType::Object => {
+                schema_object_ty(config, domain, file_name, struct_name, prop_name, schema)
+            }
+            SchemaType::Array => {
+                schema_array_ty(config, domain, file_name, struct_name, prop_name, schema)
+            }
             SchemaType::Number => Ok(quote! { f64 }),
             SchemaType::String => Ok(quote! { String }),
             SchemaType::Integer => Ok(quote! { i64 }),
         },
-        None if schema.r#ref.is_some() => schema_object_ty(config, domain, file_name, schema),
+        None => schema_object_ty(config, domain, file_name, struct_name, prop_name, schema),
         _ => panic!("Not supported types."),
     }
 }
@@ -452,10 +452,19 @@ fn schema_array_ty(
     config: &Config,
     domain: &str,
     file_name: &str,
+    struct_name: &str,
+    prop_name: &str,
     schema: &Schema,
 ) -> Result<TokenStream, Error> {
     let elem_schema = schema.items.as_ref().unwrap();
-    let elem_ty = schema_ty(config, domain, file_name, elem_schema)?;
+    let elem_ty = schema_ty(
+        config,
+        domain,
+        file_name,
+        struct_name,
+        prop_name,
+        elem_schema,
+    )?;
     Ok(quote! { Vec<#elem_ty> })
 }
 
@@ -463,20 +472,31 @@ fn schema_object_ty(
     config: &Config,
     domain: &str,
     file_name: &str,
+    struct_name: &str,
+    prop_name: &str,
     schema: &Schema,
 ) -> Result<TokenStream, Error> {
-    let schema_ref = schema.r#ref.as_deref().unwrap();
-    let schema_def = config.get_def_by_url(domain, file_name, schema_ref)?;
-    if primitive(&schema_def.schema) {
-        return schema_ty(
-            config,
-            &schema_def.domain_name,
-            &schema_def.schema_file_name,
-            &schema_def.schema,
-        );
-    }
+    match schema.r#ref.as_deref() {
+        Some(schema_ref) => {
+            let schema_def = config.get_def_by_url(domain, file_name, schema_ref)?;
+            if primitive(&schema_def.schema) {
+                return schema_ty(
+                    config,
+                    &schema_def.domain_name,
+                    &schema_def.schema_file_name,
+                    struct_name,
+                    prop_name,
+                    &schema_def.schema,
+                );
+            }
 
-    Ok(config.ref_types_name(&schema_def.domain_name, &schema_def.schema_name))
+            Ok(config.ref_types_name(&schema_def.domain_name, &schema_def.schema_name))
+        }
+        _ => {
+            let ty_name = format!("{struct_name}-{prop_name}");
+            Ok(config.ref_types_name(domain, &ty_name))
+        }
+    }
 }
 
 fn primitive(schema: &Schema) -> bool {
@@ -629,6 +649,13 @@ struct Config<'a> {
 }
 
 impl<'a> Config<'a> {
+    fn get_def_by_name(&self, domain: &str, name: &str) -> Result<&'a SchemaItem, Error> {
+        self.schemas
+            .iter()
+            .find(|&s| s.domain_name == domain && s.schema_name == name)
+            .ok_or(Error::not_found_schema(name))
+    }
+
     fn get_def_by_ref(&self, r: &str) -> Result<&'a SchemaItem, Error> {
         self.schemas
             .iter()

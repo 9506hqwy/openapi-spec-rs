@@ -247,13 +247,24 @@ fn collect_request_schema(
 ) -> Result<(), Error> {
     for item in req.content.values() {
         if let Some(schema) = &item.schema {
-            if schema.r#ref.is_none() {
-                eprintln!("Not supported request. {} {}", method, path);
-                return Ok(());
+            match schema.r#ref.as_ref() {
+                Some(r) => {
+                    collect_reference(root, entry_file, r, true, scaned_files, schemas)?;
+                }
+                _ => {
+                    let schema_name =
+                        format!("{}-{}-Request", method.to_lowercase(), resource_name(path));
+                    collect_anonymous(
+                        root,
+                        entry_file,
+                        schema,
+                        &schema_name,
+                        true,
+                        scaned_files,
+                        schemas,
+                    )?;
+                }
             }
-
-            let r = schema.r#ref.as_ref().unwrap();
-            collect_reference(root, entry_file, r, true, scaned_files, schemas)?;
         }
     }
 
@@ -271,16 +282,28 @@ fn collect_response_schema(
     if let Some(contents) = &res.content {
         for item in contents.values() {
             if let Some(schema) = &item.schema {
-                if schema.r#ref.is_none() {
-                    eprintln!(
-                        "Not supported response. {} {} {}",
-                        status.1, status.2, status.0
-                    );
-                    return Ok(());
+                match schema.r#ref.as_ref() {
+                    Some(r) => {
+                        collect_reference(root, entry_file, r, true, scaned_files, schemas)?;
+                    }
+                    _ => {
+                        let schema_name = format!(
+                            "{}-{}-{}Response",
+                            status.1.to_lowercase(),
+                            resource_name(status.0),
+                            status.2
+                        );
+                        collect_anonymous(
+                            root,
+                            entry_file,
+                            schema,
+                            &schema_name,
+                            true,
+                            scaned_files,
+                            schemas,
+                        )?;
+                    }
                 }
-
-                let r = schema.r#ref.as_ref().unwrap();
-                collect_reference(root, entry_file, r, true, scaned_files, schemas)?;
             }
         }
     }
@@ -346,29 +369,15 @@ fn collect_reference(
                             collect_reference(root, &version, r, false, scaned_files, schemas)?;
                         }
 
-                        collect_schema_property(
+                        collect_schema_child(
                             root,
                             &version,
                             schema,
+                            schema_name,
                             false,
                             scaned_files,
                             schemas,
                         )?;
-
-                        if let Some(any_of) = schema.any_of.as_ref() {
-                            for s in any_of {
-                                if let Some(r) = s.r#ref.as_ref() {
-                                    collect_reference(
-                                        root,
-                                        &version,
-                                        r,
-                                        false,
-                                        scaned_files,
-                                        schemas,
-                                    )?;
-                                }
-                            }
-                        }
                     }
                 }
                 _ => {
@@ -381,23 +390,76 @@ fn collect_reference(
     Ok(())
 }
 
+fn collect_schema_child(
+    root: &Path,
+    entry_file: &Path,
+    parent: &Schema,
+    parent_name: &str,
+    another_file: bool,
+    scaned_files: &mut Vec<PathBuf>,
+    schemas: &mut Vec<SchemaItem>,
+) -> Result<(), Error> {
+    collect_schema_property(
+        root,
+        entry_file,
+        parent,
+        parent_name,
+        another_file,
+        scaned_files,
+        schemas,
+    )?;
+
+    if let Some(any_of) = parent.any_of.as_ref() {
+        for s in any_of {
+            if let Some(r) = s.r#ref.as_ref() {
+                collect_reference(root, entry_file, r, another_file, scaned_files, schemas)?;
+            }
+            // TODO: anonymous
+        }
+    }
+
+    Ok(())
+}
+
 fn collect_schema_property(
     root: &Path,
     entry_file: &Path,
     entry: &Schema,
+    entry_name: &str,
     another_file: bool,
     scaned_files: &mut Vec<PathBuf>,
     schemas: &mut Vec<SchemaItem>,
 ) -> Result<(), Error> {
     if let Some(properties) = entry.properties.as_ref() {
-        for property in properties.values() {
+        for (prop_name, property) in properties {
             if let Some(r) = property.r#ref.as_ref() {
                 collect_reference(root, entry_file, r, another_file, scaned_files, schemas)?;
             }
 
             if let Some(i) = property.items.as_ref() {
-                if let Some(r) = i.r#ref.as_ref() {
-                    collect_reference(root, entry_file, r, another_file, scaned_files, schemas)?;
+                match i.r#ref.as_ref() {
+                    Some(r) => {
+                        collect_reference(
+                            root,
+                            entry_file,
+                            r,
+                            another_file,
+                            scaned_files,
+                            schemas,
+                        )?;
+                    }
+                    _ => {
+                        let schema_name = format!("{}-{}", entry_name, prop_name);
+                        collect_anonymous(
+                            root,
+                            entry_file,
+                            i,
+                            &schema_name,
+                            another_file,
+                            scaned_files,
+                            schemas,
+                        )?;
+                    }
                 }
             }
 
@@ -413,14 +475,32 @@ fn collect_schema_property(
                             schemas,
                         )?;
                     }
+                    // TODO: anonymous
                 }
             }
 
             if anonymous_ty(property) {
+                let schema_name = format!("{entry_name}-{prop_name}");
+
+                let anonymous = SchemaItem {
+                    domain_name: domain_name(root, entry_file),
+                    schema_file_name: entry_file
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap()
+                        .to_string(),
+                    schema: property.clone(),
+                    // join '-' because of splitting '_' for name conversion using `Config` struct.
+                    schema_name: schema_name.clone(),
+                };
+
+                schemas.push(anonymous);
+
                 collect_schema_property(
                     root,
                     entry_file,
                     property,
+                    &schema_name,
                     another_file,
                     scaned_files,
                     schemas,
@@ -428,6 +508,39 @@ fn collect_schema_property(
             }
         }
     }
+
+    Ok(())
+}
+
+fn collect_anonymous(
+    root: &Path,
+    entry_file: &Path,
+    schema: &Schema,
+    schema_name: &str,
+    another_file: bool,
+    scaned_files: &mut Vec<PathBuf>,
+    schemas: &mut Vec<SchemaItem>,
+) -> Result<(), Error> {
+    schemas.push(SchemaItem {
+        domain_name: domain_name(root, entry_file),
+        schema_file_name: entry_file
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap()
+            .to_string(),
+        schema_name: schema_name.to_string(),
+        schema: schema.clone(),
+    });
+
+    collect_schema_child(
+        root,
+        entry_file,
+        schema,
+        schema_name,
+        another_file,
+        scaned_files,
+        schemas,
+    )?;
 
     Ok(())
 }
@@ -502,4 +615,18 @@ fn domain_name(root: &Path, file_path: &Path) -> String {
     }
 
     unreachable!();
+}
+
+fn resource_name(source: &str) -> String {
+    let mut path = vec![];
+
+    for p in source.split('/').skip(3) {
+        if p.contains('{') {
+            path.push(p.strip_prefix('{').unwrap().strip_suffix('}').unwrap())
+        } else {
+            path.push(p);
+        }
+    }
+
+    path.join("-").to_string()
 }

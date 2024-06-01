@@ -97,6 +97,12 @@ fn from_part_yml(content: &str) -> Result<PartOpenApi, Error> {
     Ok(serde_yaml::from_str::<PartOpenApi>(content)?)
 }
 
+/// 再帰的にディレクトリを探索して openapi.yaml ファイルからスキーマを収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `dir` - 探索対象ディレクトリ
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_dir(
     root: &Path,
     dir: &Path,
@@ -116,6 +122,12 @@ fn collect_dir(
     Ok(())
 }
 
+/// `entry_file` のスキーマを収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `entry_file` - 対象ファイルパス
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_schemas(
     root: &Path,
     entry_file: &Path,
@@ -179,6 +191,15 @@ fn collect_schemas(
     Ok(())
 }
 
+/// `op` のスキーマを収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `entry_file` - 対象ファイルパス
+/// * `path` - API の URI
+/// * `method` - API の HTTP メソッド
+/// * `op` - API の操作
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_schema(
     root: &Path,
     entry_file: &Path,
@@ -236,6 +257,15 @@ fn collect_schema(
     Ok(())
 }
 
+/// リクエストのスキーマを収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `entry_file` - 対象ファイルパス
+/// * `path` - API の URI
+/// * `method` - API の HTTP メソッド
+/// * `req` - リクエスト
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_request_schema(
     root: &Path,
     entry_file: &Path,
@@ -271,6 +301,14 @@ fn collect_request_schema(
     Ok(())
 }
 
+/// レスポンスのスキーマを収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `entry_file` - 対象ファイルパス
+/// * `status` - API の URI, API のメソッド, HTTP ステータスコード
+/// * `res` - レスポンス
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_response_schema(
     root: &Path,
     entry_file: &Path,
@@ -311,6 +349,14 @@ fn collect_response_schema(
     Ok(())
 }
 
+/// 参照先のスキーマを収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `entry_file` - `r` がフラグメントのみの場合のファイルパス
+/// * `r` - 参照
+/// * `another_file` - バージョンが異なるファイルを読み込むかどうか
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_reference(
     root: &Path,
     entry_file: &Path,
@@ -390,6 +436,15 @@ fn collect_reference(
     Ok(())
 }
 
+/// スキーマの中にあるスキーマを収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `entry_file` - スキーマを定義しているファイルパス
+/// * `parent` - スキーマ
+/// * `parent_name` - スキーマの名前
+/// * `another_file` - バージョンが異なるファイルを読み込むかどうか
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_schema_child(
     root: &Path,
     entry_file: &Path,
@@ -421,6 +476,15 @@ fn collect_schema_child(
     Ok(())
 }
 
+/// スキーマの中にある `properties` を収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `entry_file` - スキーマを定義しているファイルパス
+/// * `entry` - スキーマ
+/// * `entry_name` - スキーマの名前
+/// * `another_file` - バージョンが異なるファイルを読み込むかどうか
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_schema_property(
     root: &Path,
     entry_file: &Path,
@@ -512,6 +576,15 @@ fn collect_schema_property(
     Ok(())
 }
 
+/// スキーマの中にある `properties` を収集する。
+///
+/// * `root` - ルートディレクトリ
+/// * `entry_file` - スキーマを定義しているファイルパス
+/// * `schema` - スキーマ
+/// * `schema_name` - スキーマの名前
+/// * `another_file` - バージョンが異なるファイルを読み込むかどうか
+/// * `scaned_files` - 収集済みファイルパス
+/// * `schemas` - 収集したスキーマ
 fn collect_anonymous(
     root: &Path,
     entry_file: &Path,
@@ -545,6 +618,7 @@ fn collect_anonymous(
     Ok(())
 }
 
+/// 匿名型かどうかを判定する。
 fn anonymous_ty(schema: &Schema) -> bool {
     schema.r#type == Some(SchemaTypes::Unit(SchemaType::Object)) && schema.r#ref.is_none()
 }
@@ -552,9 +626,13 @@ fn anonymous_ty(schema: &Schema) -> bool {
 // ---------------------------------------------------------------------------
 
 pub struct SchemaItem {
+    /// ドメイン名
     domain_name: String,
+    /// ファイル名
     schema_file_name: String,
+    /// フラグメント
     schema_name: String,
+    /// スキーマ
     schema: Schema,
 }
 
@@ -596,6 +674,10 @@ fn all_version(path: &Path, another_file: bool) -> Result<Vec<PathBuf>, Error> {
     Ok(versions)
 }
 
+/// ドメイン名を取得する。
+///
+/// `http://redfish.dmtf.org/schemas/domain/v1/` の形式から
+/// `domain` を返却する。存在しない場合は空文字を返却する。
 fn domain_name(root: &Path, file_path: &Path) -> String {
     let rel_path = file_path.strip_prefix(root).unwrap();
     let mut schemas = None;
@@ -617,6 +699,7 @@ fn domain_name(root: &Path, file_path: &Path) -> String {
     unreachable!();
 }
 
+/// URI をもとに '-' で連結したリソース名を取得する。
 fn resource_name(source: &str) -> String {
     let mut path = vec![];
 

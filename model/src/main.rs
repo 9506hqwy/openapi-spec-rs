@@ -11,6 +11,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 fn main() -> Result<(), Error> {
     let mut args = env::args();
@@ -40,6 +41,8 @@ fn main() -> Result<(), Error> {
         eprintln!("schame: {}", &schema.r#ref());
     }
     */
+
+    check_schema(&mut schemas);
 
     println!("Source Code Generating...");
     gen(&output, &schemas)?;
@@ -404,6 +407,8 @@ fn collect_anonymous(
             .to_string(),
         schema_name: schema_name.to_string(),
         schema: schema.clone(),
+        anony: true,
+        duplicated: false,
     });
 
     collect_schema_child(
@@ -455,6 +460,21 @@ fn collect_schema_child(
 
     if let Some(any_of) = parent.any_of.as_ref() {
         for (i, s) in any_of.iter().enumerate() {
+            let schema_name = format!("{}-{}", parent_name, i);
+            collect_anonymous_or_child(
+                root,
+                entry_file,
+                s,
+                &schema_name,
+                another_file,
+                scaned_files,
+                schemas,
+            )?;
+        }
+    }
+
+    if let Some(one_of) = parent.one_of.as_ref() {
+        for (i, s) in one_of.iter().enumerate() {
             let schema_name = format!("{}-{}", parent_name, i);
             collect_anonymous_or_child(
                 root,
@@ -539,6 +559,8 @@ fn collect_reference(
                             schema_file_name: file_name.to_string(),
                             schema_name: schema_name.to_string(),
                             schema: schema.clone(),
+                            anony: false,
+                            duplicated: false,
                         };
 
                         schemas.push(item);
@@ -602,11 +624,47 @@ fn collect_schema_property(
 
 /// 匿名型かどうかを判定する。
 fn anonymous_ty(schema: &Schema) -> bool {
-    schema.r#type == Some(SchemaTypes::Unit(SchemaType::Object)) && schema.r#ref.is_none()
+    (schema.r#type == Some(SchemaTypes::Unit(SchemaType::Object)) && schema.r#ref.is_none())
+        || (schema.r#enum.is_some() && schema.r#ref.is_none())
+        || schema
+            .any_of
+            .as_ref()
+            .map(|s| s.iter().len() > 1)
+            .unwrap_or_default()
+        || schema
+            .one_of
+            .as_ref()
+            .map(|s| s.iter().len() > 1)
+            .unwrap_or_default()
+}
+
+/// 生成される Rust 型が他のスキーマと重複する匿名型のスキーマをマーキングする。
+fn check_schema(schemas: &mut Vec<SchemaItem>) {
+    let copied = schemas.clone();
+    let config = Config { schemas: &copied };
+
+    let copied = copied
+        .iter()
+        .map(|s| {
+            let ty_names = config.ref_types_name(&s.domain_name, &s.schema_name, false);
+            ty_names.join("::")
+        })
+        .collect::<Vec<String>>();
+
+    for schema in schemas {
+        let ty_names = config.ref_types_name(&schema.domain_name, &schema.schema_name, false);
+        let ty_name = ty_names.join("::");
+
+        if schema.anony && copied.iter().filter(|&s| s == &ty_name).count() > 1 {
+            schema.duplicated = true;
+            println!("Warning: Duplicate {}.", schema.schema_name);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct SchemaItem {
     /// ドメイン名
     domain_name: String,
@@ -616,6 +674,10 @@ pub struct SchemaItem {
     schema_name: String,
     /// スキーマ
     schema: Schema,
+    /// 匿名型かどうか
+    anony: bool,
+    /// 構造体の名前が重複するかどうか
+    duplicated: bool,
 }
 
 impl SchemaItem {
@@ -626,6 +688,134 @@ impl SchemaItem {
         format!("{domain_name}/{schema_file_name}#{schema_name}")
     }
 }
+
+// ---------------------------------------------------------------------------
+
+pub struct Config<'a> {
+    schemas: &'a [SchemaItem],
+}
+
+impl<'a> Config<'a> {
+    /// 指定した名前のスキーマを取得する。
+    fn get_def_by_name(&self, domain: &str, name: &str) -> Result<&'a SchemaItem, Error> {
+        self.schemas
+            .iter()
+            .find(|&s| s.domain_name == domain && s.schema_name == name)
+            .ok_or(Error::not_found_schema(name))
+    }
+
+    /// 指定した参照のスキーマを取得する。
+    fn get_def_by_ref(&self, r: &str) -> Result<&'a SchemaItem, Error> {
+        self.schemas
+            .iter()
+            .find(|&s| s.r#ref() == r)
+            .ok_or(Error::not_found_schema(r))
+    }
+
+    /// 指定した URL のスキーマを取得する。
+    fn get_def_by_url(
+        &self,
+        domain_name: &str,
+        file_name: &str,
+        uri: &str,
+    ) -> Result<&'a SchemaItem, Error> {
+        let (url, component) = uri.rsplit_once('#').ok_or(Error::invalid_uri(uri))?;
+        let domain_name = self.domain(url, domain_name);
+        let (_, file_name) = url.rsplit_once('/').unwrap_or(("", file_name));
+        let (_, schema_name) = component
+            .rsplit_once('/')
+            .ok_or(Error::invalid_component_path(uri))?;
+        self.get_def_by_ref(&format!("{domain_name}/{file_name}#{schema_name}"))
+    }
+
+    // NOTICE: consider name conversion for redfish schema only.
+
+    /// ドメイン名を取得する。
+    ///
+    /// `http://redfish.dmtf.org/schemas/domain/v1/` の形式から
+    /// `domain` を返却する。存在しない場合は空文字を返却する。
+    fn domain(&self, url: &str, domain_name: &str) -> String {
+        let domain_name = url.split('/').nth(4).unwrap_or(domain_name);
+        if domain_name == "v1" {
+            "".to_string()
+        } else {
+            domain_name.to_string()
+        }
+    }
+
+    /// スキーマの名前からモジュールの名前とバージョンを取得する。
+    ///
+    /// `module_vX_Y_Z_name` の形式から `module` と `(X, Y, X)` を返却する。
+    fn modules_name(&self, source: &str) -> (String, Option<(u8, u8, u8)>) {
+        let (value, _) = source.rsplit_once('_').unwrap_or_default();
+        let (module, version_str) = value.split_once('_').unwrap_or((value, ""));
+
+        let mut version = None;
+        if !version_str.is_empty() {
+            let mut v = version_str
+                .strip_prefix('v')
+                .unwrap_or(version_str)
+                .splitn(3, '_')
+                .map(u8::from_str)
+                .map(|v| v.unwrap());
+            version = Some((v.next().unwrap(), v.next().unwrap(), v.next().unwrap()));
+        }
+
+        (snake_case(module), version)
+    }
+
+    /// スキーマの名前から型名を取得する。
+    ///
+    /// `module_vX_Y_Z_name` の形式から `name` を返却する。
+    fn types_name(&self, source: &str, duplicated: bool) -> String {
+        let (_, value) = source.rsplit_once('_').unwrap_or(("", source));
+
+        let mut v = value.to_string();
+        if duplicated {
+            v = format!("{}-Anony", v);
+        }
+
+        upper_camel_case(&v)
+    }
+
+    /// 列挙型のフィールドの名前を取得する。
+    fn enum_variants_name(&self, source: &str) -> String {
+        upper_camel_case(source)
+    }
+
+    /// 構造体のフィールドの名前を取得する。
+    fn fields_name(&self, source: &str) -> String {
+        snake_case(source)
+    }
+
+    /// 指定したスキーマの名前から型の階層を取得する。
+    fn ref_types_name(&self, domain: &str, source: &str, duplicated: bool) -> Vec<String> {
+        let (module, version) = self.modules_name(source);
+        let ty_name = self.types_name(source, duplicated);
+
+        let mut type_names = vec!["crate".to_string()];
+
+        if !domain.is_empty() {
+            type_names.push(domain.to_string());
+        }
+
+        if !module.is_empty() {
+            type_names.push(module);
+        }
+
+        if let Some(v) = version {
+            type_names.push(format!("v{}_{}_{}", v.0, v.1, v.2));
+        }
+
+        if !ty_name.is_empty() {
+            type_names.push(ty_name);
+        }
+
+        type_names
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 // NOTICE: consider name conversion for redfish schema only.
 
@@ -694,4 +884,99 @@ fn resource_name(source: &str) -> String {
     }
 
     path.join("-").to_string()
+}
+
+fn upper_camel_case(value: &str) -> String {
+    value
+        .split(&['_', '+', '-', '.', '@', '#', ' ', '/', ':'][..])
+        .map(|v| {
+            v.chars()
+                .enumerate()
+                .map(|(index, c)| match index {
+                    0 => c.to_ascii_uppercase(),
+                    _ => c,
+                })
+                .collect::<String>()
+        })
+        .fold("".to_string(), |mut acc, x| {
+            match u64::from_str(&x) {
+                Ok(n) => acc.push_str(&format!("N{n}")),
+                _ => acc.push_str(&x),
+            };
+
+            acc
+        })
+}
+
+fn snake_case(value: &str) -> String {
+    let v = value
+        // Change word because snake-casing not work well.
+        .replace("ETag", "Etag")
+        .replace("FCoE", "FcOe")
+        .replace("GiB", "Gib")
+        .replace("I2C", "I2c")
+        .replace("IDs", "Ids")
+        .replace("IPv4", "Ipv4")
+        .replace("IPv6", "Ipv6")
+        .replace("KiB", "Kib")
+        .replace("kVAh", "Kvah")
+        .replace("kVARh", "Kvarh")
+        .replace("LoS", "Los")
+        .replace("MiB", "Mib")
+        .replace("MHz", "Mhz")
+        .replace("NVMe", "Nvme")
+        .replace("NvmeoF", "Nvme_Of")
+        .replace("OAuth", "Oauth")
+        .replace("PCIe", "Pcie")
+        .replace("QoS", "Qos")
+        .replace("VLAN", "Vlan")
+        .replace("VLan", "Vlan")
+        .split(&['_', '+', '-', '.', '@', '#', ' ', '/', ':'][..])
+        .flat_map(|v| {
+            let mut words = vec![];
+            let mut index = 0;
+            let mut upper_char = false;
+
+            for (next, _) in v.match_indices(char::is_uppercase) {
+                if !upper_char || (next - index) > 1 {
+                    words.push(v[index..next].to_ascii_lowercase());
+                } else {
+                    // combine upper-case char sequence.
+                    words
+                        .last_mut()
+                        .unwrap()
+                        .push_str(&v[index..next].to_ascii_lowercase());
+                }
+
+                upper_char = (next - index) == 1;
+                index = next;
+            }
+
+            match index {
+                0 => words.push(v.to_ascii_lowercase()),
+                _ => {
+                    if !upper_char || (v.len() - index) > 1 {
+                        words.push(v[index..].to_ascii_lowercase());
+                    } else {
+                        // combine upper-case char sequence.
+                        words
+                            .last_mut()
+                            .unwrap()
+                            .push_str(&v[index..].to_ascii_lowercase());
+                    }
+                }
+            }
+
+            words
+        })
+        .filter(|v| !v.is_empty())
+        .collect::<Vec<String>>()
+        .join("_")
+        .trim_matches('_')
+        .to_string();
+
+    match u64::from_str(&v) {
+        Ok(n) => format!("N{n}"),
+        _ => v,
+    }
 }

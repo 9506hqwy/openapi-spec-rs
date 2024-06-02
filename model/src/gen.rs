@@ -1,5 +1,5 @@
 use super::error::Error;
-use super::{anonymous_ty, SchemaItem};
+use super::{anonymous_ty, Config, SchemaItem};
 use openapi_spec_schema::{Schema, SchemaType, SchemaTypes};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -7,7 +7,6 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
-use std::str::FromStr;
 
 pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
     let config = Config { schemas };
@@ -19,16 +18,14 @@ pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
             panic!("Not supported `allOf`.");
         }
 
-        if item.schema.one_of.is_some() {
-            panic!("Not supported `oneOf`.");
-        }
-
         if item.schema.r#ref.is_some() {
             structs.push(get_type_alias(&config, item)?);
         } else if item.schema.any_of.is_some() {
             structs.push(gen_newtype_variant(&config, item)?);
         } else if item.schema.r#enum.is_some() {
             structs.push(gen_unit_variant(&config, item)?);
+        } else if item.schema.one_of.is_some() {
+            structs.push(gen_newtype_variant(&config, item)?);
         } else if !primitive(&item.schema) {
             structs.append(&mut gen_struct(&config, item)?);
         }
@@ -243,13 +240,18 @@ fn write_code(file_path: &Path, token: &TokenStream) -> Result<(), Error> {
 
 /// 型エイリアスのコードを生成する。
 fn get_type_alias(config: &Config, item: &SchemaItem) -> Result<StructInfo, Error> {
-    let struct_name = config.types_name(&item.schema_name);
+    let struct_name = config.types_name(&item.schema_name, item.duplicated);
     let struct_ident = format_ident!("{struct_name}");
 
     let r = item.schema.r#ref.as_deref().unwrap();
     let ty_item = config.get_def_by_url(&item.domain_name, &item.schema_file_name, r)?;
 
-    let ty_token = config.ref_types_name(&ty_item.domain_name, &ty_item.schema_name);
+    let ty_token = schema_ref_type_name(
+        config,
+        &ty_item.domain_name,
+        &ty_item.schema_name,
+        ty_item.duplicated,
+    );
 
     let (module_name, version) = config.modules_name(&item.schema_name);
 
@@ -267,7 +269,7 @@ fn get_type_alias(config: &Config, item: &SchemaItem) -> Result<StructInfo, Erro
 
 /// unit variant のコードを生成する。
 fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Error> {
-    let struct_name = config.types_name(&item.schema_name);
+    let struct_name = config.types_name(&item.schema_name, item.duplicated);
     let struct_ident = format_ident!("{struct_name}");
 
     let mut variants = item.schema.r#enum.as_ref().unwrap().to_vec();
@@ -302,21 +304,41 @@ fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Er
 
 /// newtype variant のコードを生成する。
 fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Error> {
-    let struct_name = config.types_name(&item.schema_name);
+    let struct_name = config.types_name(&item.schema_name, item.duplicated);
     let struct_ident = format_ident!("{struct_name}");
 
     let mut variants = vec![];
-    for variant_schema in item.schema.any_of.as_ref().unwrap() {
-        // TODO: anonymous
-        let r = variant_schema.r#ref.as_deref().unwrap();
-        let variant_schema_def =
-            config.get_def_by_url(&item.domain_name, &item.schema_file_name, r)?;
-        let (_, version) = config.modules_name(&variant_schema_def.schema_name);
-        variants.push((
-            version_num(version),
-            variant_schema_def.domain_name.clone(),
-            variant_schema_def.schema_name.clone(),
-        ));
+
+    if let Some(any_of) = item.schema.any_of.as_ref() {
+        for variant_schema in any_of {
+            // TODO: anonymous
+            let r = variant_schema.r#ref.as_deref().unwrap();
+            let variant_schema_def =
+                config.get_def_by_url(&item.domain_name, &item.schema_file_name, r)?;
+            let (_, version) = config.modules_name(&variant_schema_def.schema_name);
+            variants.push((version_num(version), variant_schema_def));
+        }
+    }
+
+    if let Some(one_of) = item.schema.one_of.as_ref() {
+        for (i, variant_schema) in one_of.iter().enumerate() {
+            if let Some(r) = variant_schema.r#ref.as_deref() {
+                let variant_schema_def =
+                    config.get_def_by_url(&item.domain_name, &item.schema_file_name, r)?;
+                let (_, version) = config.modules_name(&variant_schema_def.schema_name);
+                variants.push((version_num(version), variant_schema_def));
+            } else if variant_schema.r#enum.is_some() {
+                let schema_name = format!("{}-{}", item.schema_name, i);
+                let variant_schema_def = config.get_def_by_name(&item.domain_name, &schema_name)?;
+                variants.push((i as u32, variant_schema_def));
+            } else {
+                dbg!(&item.schema);
+                panic!(
+                    "Not supported item of `oneOf` ({}/{}).",
+                    item.schema_file_name, item.schema_name
+                );
+            }
+        }
     }
 
     variants.sort_unstable_by_key(|v| v.0);
@@ -325,15 +347,44 @@ fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo,
     let variant_idents = variants.iter().map(|v| {
         let variant_name = if v.0 == 0 {
             // バージョンがない場合はフラグメント
-            config.enum_variants_name(&v.2)
+            config.enum_variants_name(&v.1.schema_name)
         } else {
             // バージョンがある場合はバージョン
             config.enum_variants_name(&format!("v{:06}", v.0))
         };
         let variant_ident = format_ident!("{}", variant_name);
-        let ref_ty_ident = config.ref_types_name(&v.1, &v.2);
+
+        let ref_ty_ident = schema_ty(
+            config,
+            &v.1.domain_name,
+            &v.1.schema_file_name,
+            &v.1.schema_name,
+            "",
+            &v.1.schema,
+        )
+        .unwrap();
+
         quote! {
             #variant_ident(#ref_ty_ident)
+        }
+    });
+
+    let default_impl = variants.first().map(|v| {
+        let variant_name = if v.0 == 0 {
+            // バージョンがない場合はフラグメント
+            config.enum_variants_name(&v.1.schema_name)
+        } else {
+            // バージョンがある場合はバージョン
+            config.enum_variants_name(&format!("v{:06}", v.0))
+        };
+        let variant_ident = format_ident!("{}", variant_name);
+
+        quote! {
+            impl Default for #struct_ident {
+                fn default() -> Self {
+                    Self::#variant_ident(Default::default())
+                }
+            }
         }
     });
 
@@ -350,6 +401,8 @@ fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo,
             pub enum #struct_ident {
                 #(#variant_idents),*
             }
+
+            #default_impl
         },
         use_serde: true,
     })
@@ -357,7 +410,7 @@ fn gen_newtype_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo,
 
 /// struct のコードを生成する。
 fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Error> {
-    let struct_name = config.types_name(&item.schema_name);
+    let struct_name = config.types_name(&item.schema_name, item.duplicated);
     let struct_ident = format_ident!("{struct_name}");
 
     let mut structs = vec![];
@@ -378,13 +431,18 @@ fn gen_struct(config: &Config, item: &SchemaItem) -> Result<Vec<StructInfo>, Err
                 let property_name = format!("{schema_name}-{prop_name}");
                 let property_def = config.get_def_by_name(&item.domain_name, &property_name)?;
 
-                config.ref_types_name(&property_def.domain_name, &property_def.schema_name)
+                schema_ref_type_name(
+                    config,
+                    &property_def.domain_name,
+                    &property_def.schema_name,
+                    property_def.duplicated,
+                )
             } else {
                 schema_ty(
                     config,
                     &item.domain_name,
                     &item.schema_file_name,
-                    &struct_name,
+                    &item.schema_name,
                     prop_name,
                     prop_schema,
                 )?
@@ -449,7 +507,19 @@ fn schema_ty(
                 schema_array_ty(config, domain, file_name, struct_name, prop_name, schema)
             }
             SchemaType::Number => Ok(quote! { f64 }),
-            SchemaType::String => Ok(quote! { String }),
+            SchemaType::String => {
+                if schema.r#enum.is_some() {
+                    let schema_def = config.get_def_by_name(domain, struct_name)?;
+                    Ok(schema_ref_type_name(
+                        config,
+                        &schema_def.domain_name,
+                        &schema_def.schema_name,
+                        schema_def.duplicated,
+                    ))
+                } else {
+                    Ok(quote! { String })
+                }
+            }
             SchemaType::Integer => Ok(quote! { i64 }),
         },
         None => schema_object_ty(config, domain, file_name, struct_name, prop_name, schema),
@@ -501,12 +571,32 @@ fn schema_object_ty(
                 );
             }
 
-            Ok(config.ref_types_name(&schema_def.domain_name, &schema_def.schema_name))
+            Ok(schema_ref_type_name(
+                config,
+                &schema_def.domain_name,
+                &schema_def.schema_name,
+                schema_def.duplicated,
+            ))
         }
         _ => {
             let ty_name = format!("{struct_name}-{prop_name}");
-            Ok(config.ref_types_name(domain, &ty_name))
+            Ok(schema_ref_type_name(config, domain, &ty_name, false))
         }
+    }
+}
+
+/// 指定したスキーマの名前から Rust 型を取得する。
+fn schema_ref_type_name(
+    config: &Config,
+    domain: &str,
+    source: &str,
+    duplicated: bool,
+) -> TokenStream {
+    let type_names = config.ref_types_name(domain, source, duplicated);
+    let type_idents = type_names.iter().map(|n| format_ident!("{n}"));
+
+    quote! {
+        #(#type_idents)::*
     }
 }
 
@@ -547,101 +637,6 @@ fn required(ty: &Schema, prop_name: &str) -> bool {
     false
 }
 
-fn upper_camel_case(value: &str) -> String {
-    value
-        .split(&['_', '+', '-', '.', '@', '#', ' ', '/', ':'][..])
-        .map(|v| {
-            v.chars()
-                .enumerate()
-                .map(|(index, c)| match index {
-                    0 => c.to_ascii_uppercase(),
-                    _ => c,
-                })
-                .collect::<String>()
-        })
-        .fold("".to_string(), |mut acc, x| {
-            match u64::from_str(&x) {
-                Ok(n) => acc.push_str(&format!("N{n}")),
-                _ => acc.push_str(&x),
-            };
-
-            acc
-        })
-}
-
-fn snake_case(value: &str) -> String {
-    let v = value
-        // Change word because snake-casing not work well.
-        .replace("ETag", "Etag")
-        .replace("FCoE", "FcOe")
-        .replace("GiB", "Gib")
-        .replace("I2C", "I2c")
-        .replace("IDs", "Ids")
-        .replace("IPv4", "Ipv4")
-        .replace("IPv6", "Ipv6")
-        .replace("KiB", "Kib")
-        .replace("kVAh", "Kvah")
-        .replace("kVARh", "Kvarh")
-        .replace("LoS", "Los")
-        .replace("MiB", "Mib")
-        .replace("MHz", "Mhz")
-        .replace("NVMe", "Nvme")
-        .replace("NvmeoF", "Nvme_Of")
-        .replace("OAuth", "Oauth")
-        .replace("PCIe", "Pcie")
-        .replace("QoS", "Qos")
-        .replace("VLAN", "Vlan")
-        .replace("VLan", "Vlan")
-        .split(&['_', '+', '-', '.', '@', '#', ' ', '/', ':'][..])
-        .flat_map(|v| {
-            let mut words = vec![];
-            let mut index = 0;
-            let mut upper_char = false;
-
-            for (next, _) in v.match_indices(char::is_uppercase) {
-                if !upper_char || (next - index) > 1 {
-                    words.push(v[index..next].to_ascii_lowercase());
-                } else {
-                    // combine upper-case char sequence.
-                    words
-                        .last_mut()
-                        .unwrap()
-                        .push_str(&v[index..next].to_ascii_lowercase());
-                }
-
-                upper_char = (next - index) == 1;
-                index = next;
-            }
-
-            match index {
-                0 => words.push(v.to_ascii_lowercase()),
-                _ => {
-                    if !upper_char || (v.len() - index) > 1 {
-                        words.push(v[index..].to_ascii_lowercase());
-                    } else {
-                        // combine upper-case char sequence.
-                        words
-                            .last_mut()
-                            .unwrap()
-                            .push_str(&v[index..].to_ascii_lowercase());
-                    }
-                }
-            }
-
-            words
-        })
-        .filter(|v| !v.is_empty())
-        .collect::<Vec<String>>()
-        .join("_")
-        .trim_matches('_')
-        .to_string();
-
-    match u64::from_str(&v) {
-        Ok(n) => format!("N{n}"),
-        _ => v,
-    }
-}
-
 // ---------------------------------------------------------------------------
 
 // https://doc.rust-lang.org/book/appendix-01-keywords.html
@@ -654,130 +649,6 @@ const KEYWORDS_RUST: &[&str] = &[
 
 pub fn rust_reserved(keyword: &str) -> bool {
     KEYWORDS_RUST.iter().any(|&k| k == keyword)
-}
-
-// ---------------------------------------------------------------------------
-
-struct Config<'a> {
-    schemas: &'a [SchemaItem],
-}
-
-impl<'a> Config<'a> {
-    /// 指定した名前のスキーマを取得する。
-    fn get_def_by_name(&self, domain: &str, name: &str) -> Result<&'a SchemaItem, Error> {
-        self.schemas
-            .iter()
-            .find(|&s| s.domain_name == domain && s.schema_name == name)
-            .ok_or(Error::not_found_schema(name))
-    }
-
-    /// 指定した参照のスキーマを取得する。
-    fn get_def_by_ref(&self, r: &str) -> Result<&'a SchemaItem, Error> {
-        self.schemas
-            .iter()
-            .find(|&s| s.r#ref() == r)
-            .ok_or(Error::not_found_schema(r))
-    }
-
-    /// 指定した URL のスキーマを取得する。
-    fn get_def_by_url(
-        &self,
-        domain_name: &str,
-        file_name: &str,
-        uri: &str,
-    ) -> Result<&'a SchemaItem, Error> {
-        let (url, component) = uri.rsplit_once('#').ok_or(Error::invalid_uri(uri))?;
-        let domain_name = self.domain(url, domain_name);
-        let (_, file_name) = url.rsplit_once('/').unwrap_or(("", file_name));
-        let (_, schema_name) = component
-            .rsplit_once('/')
-            .ok_or(Error::invalid_component_path(uri))?;
-        self.get_def_by_ref(&format!("{domain_name}/{file_name}#{schema_name}"))
-    }
-
-    // NOTICE: consider name conversion for redfish schema only.
-
-    /// ドメイン名を取得する。
-    ///
-    /// `http://redfish.dmtf.org/schemas/domain/v1/` の形式から
-    /// `domain` を返却する。存在しない場合は空文字を返却する。
-    fn domain(&self, url: &str, domain_name: &str) -> String {
-        let domain_name = url.split('/').nth(4).unwrap_or(domain_name);
-        if domain_name == "v1" {
-            "".to_string()
-        } else {
-            domain_name.to_string()
-        }
-    }
-
-    /// スキーマの名前からモジュールの名前とバージョンを取得する。
-    ///
-    /// `module_vX_Y_Z_name` の形式から `module` と `(X, Y, X)` を返却する。
-    fn modules_name(&self, source: &str) -> (String, Option<(u8, u8, u8)>) {
-        let (value, _) = source.rsplit_once('_').unwrap_or_default();
-        let (module, version_str) = value.split_once('_').unwrap_or((value, ""));
-
-        let mut version = None;
-        if !version_str.is_empty() {
-            let mut v = version_str
-                .strip_prefix('v')
-                .unwrap_or(version_str)
-                .splitn(3, '_')
-                .map(u8::from_str)
-                .map(|v| v.unwrap());
-            version = Some((v.next().unwrap(), v.next().unwrap(), v.next().unwrap()));
-        }
-
-        (snake_case(module), version)
-    }
-
-    /// スキーマの名前から型名を取得する。
-    ///
-    /// `module_vX_Y_Z_name` の形式から `name` を返却する。
-    fn types_name(&self, source: &str) -> String {
-        let (_, value) = source.rsplit_once('_').unwrap_or(("", source));
-        upper_camel_case(value)
-    }
-
-    /// 列挙型のフィールドの名前を取得する。
-    fn enum_variants_name(&self, source: &str) -> String {
-        upper_camel_case(source)
-    }
-
-    /// 構造体のフィールドの名前を取得する。
-    fn fields_name(&self, source: &str) -> String {
-        snake_case(source)
-    }
-
-    /// 指定したスキーマの名前から Rust 型を取得する。
-    fn ref_types_name(&self, domain: &str, source: &str) -> TokenStream {
-        let (module, version) = self.modules_name(source);
-        let ty_name = self.types_name(source);
-
-        let mut type_names = vec!["crate".to_string()];
-
-        if !domain.is_empty() {
-            type_names.push(domain.to_string());
-        }
-
-        if !module.is_empty() {
-            type_names.push(module);
-        }
-
-        if let Some(v) = version {
-            type_names.push(format!("v{}_{}_{}", v.0, v.1, v.2));
-        }
-
-        if !ty_name.is_empty() {
-            type_names.push(ty_name);
-        }
-
-        let type_idents = type_names.iter().map(|n| format_ident!("{n}"));
-
-        quote! {
-            #(#type_idents)::*
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -804,10 +675,14 @@ impl StructInfo {
     }
 }
 
+// ---------------------------------------------------------------------------
+
 struct PropertyInfo {
     name: String,
     token: TokenStream,
 }
+
+// ---------------------------------------------------------------------------
 
 fn version_num(version: Option<(u8, u8, u8)>) -> u32 {
     match version {

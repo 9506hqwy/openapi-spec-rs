@@ -1,8 +1,8 @@
 mod error;
-mod gen;
+mod gen_code;
 
 use self::error::Error;
-use self::gen::gen;
+use self::gen_code::gen_code;
 use openapi_spec_schema::{
     OpenApi, Operation, PartOpenApi, ReferenceOr, RequestBody, Response, Schema, SchemaType,
     SchemaTypes,
@@ -45,7 +45,7 @@ fn main() -> Result<(), Error> {
     check_schema(&mut schemas);
 
     println!("Source Code Generating...");
-    gen(&output, &schemas)?;
+    gen_code(&output, &schemas)?;
 
     Ok(())
 }

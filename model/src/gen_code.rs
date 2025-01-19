@@ -1,5 +1,5 @@
 use super::error::Error;
-use super::{anonymous_ty, Config, SchemaItem};
+use super::{Config, SchemaItem, anonymous_ty};
 use openapi_spec_schema::{Schema, SchemaType, SchemaTypes};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
 
-pub fn gen(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
+pub fn gen_code(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
     let config = Config { schemas };
 
     let mut structs = vec![];

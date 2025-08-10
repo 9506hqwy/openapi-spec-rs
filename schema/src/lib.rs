@@ -1008,11 +1008,6 @@ pub struct OAuthFlowAuthorizationCode {
 
 type SecurityRequirement = HashMap<String, Vec<String>>;
 
-// For splitting Redfish schema into multiple files.
-// I do not understand this specification.
-// I think that the part file is not compilicant to Schema object.
-// https://spec.openapis.org/oas/v3.0.3#schemaObject
-// > Additional properties defined by the JSON Schema specification that are not mentioned here are strictly unsupported.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct PartOpenApi {
     // since v3.1.0

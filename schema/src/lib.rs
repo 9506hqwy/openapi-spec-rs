@@ -672,7 +672,7 @@ pub struct Schema {
     pub r#type: Option<SchemaTypes>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub r#enum: Option<Vec<String>>,
+    pub r#enum: Option<Vec<Any>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub r#const: Option<Any>,
@@ -1262,6 +1262,28 @@ mod tests {
         let v = Parameter::default();
         let s = serde_json::to_string(&v).unwrap();
         assert_eq!("{\"name\":\"\",\"in\":\"query\"}", s);
+        let r = serde_json::from_str::<Parameter>(&s).unwrap();
+        assert_eq!(v, r);
+    }
+
+    #[test]
+    fn serde_parameter_schema() {
+        let v = Parameter {
+            pattern: ParameterPattern::Style(ParameterStyle {
+                schema: Some(Schema {
+                    r#type: Some(SchemaTypes::Unit(SchemaType::Integer)),
+                    r#enum: Some(vec![Any::Number(1)]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(
+            "{\"name\":\"\",\"in\":\"query\",\"schema\":{\"type\":\"integer\",\"enum\":[1]}}",
+            s
+        );
         let r = serde_json::from_str::<Parameter>(&s).unwrap();
         assert_eq!(v, r);
     }

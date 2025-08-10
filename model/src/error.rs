@@ -6,6 +6,7 @@ pub enum Error {
     Io(std::io::Error),
     Json(serde_json::Error),
     NotFoundSchema(String),
+    NotSupported(String),
     Yaml(serde_yaml::Error),
 }
 

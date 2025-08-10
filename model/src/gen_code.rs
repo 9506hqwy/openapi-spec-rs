@@ -1,5 +1,6 @@
 use super::error::Error;
 use super::{Config, SchemaItem, anonymous_ty};
+use openapi_spec_schema::model::Any;
 use openapi_spec_schema::{Schema, SchemaType, SchemaTypes};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -272,7 +273,19 @@ fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Er
     let struct_name = config.types_name(&item.schema_name, item.duplicated);
     let struct_ident = format_ident!("{struct_name}");
 
-    let mut variants = item.schema.r#enum.as_ref().unwrap().to_vec();
+    let mut variants = vec![];
+    for v in item.schema.r#enum.as_ref().unwrap() {
+        match v {
+            Any::String(v) => {
+                variants.push(v.to_string());
+            }
+            _ => {
+                return Err(Error::NotSupported(format!(
+                    "Not supported unit variant: {v:?}."
+                )));
+            }
+        }
+    }
 
     variants.sort();
 

@@ -460,7 +460,7 @@ fn collect_schema_child(
 
     if let Some(any_of) = parent.any_of.as_ref() {
         for (i, s) in any_of.iter().enumerate() {
-            let schema_name = format!("{}-{}", parent_name, i);
+            let schema_name = format!("{parent_name}-{i}");
             collect_anonymous_or_child(
                 root,
                 entry_file,
@@ -475,7 +475,7 @@ fn collect_schema_child(
 
     if let Some(one_of) = parent.one_of.as_ref() {
         for (i, s) in one_of.iter().enumerate() {
-            let schema_name = format!("{}-{}", parent_name, i);
+            let schema_name = format!("{parent_name}-{i}");
             collect_anonymous_or_child(
                 root,
                 entry_file,
@@ -772,7 +772,7 @@ impl<'a> Config<'a> {
 
         let mut v = value.to_string();
         if duplicated {
-            v = format!("{}-Anony", v);
+            v = format!("{v}-Anony");
         }
 
         upper_camel_case(&v)

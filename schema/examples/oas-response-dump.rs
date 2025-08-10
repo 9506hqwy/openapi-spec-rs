@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             } else {
                 for code in res.statuses.values.keys() {
-                    println!("{}", code);
+                    println!("{code}");
                 }
             }
         }
@@ -228,7 +228,7 @@ fn dump_media(
 fn dump_schema(model: (&Path, &Option<Components>), schema: &Schema) -> Result<(), Box<dyn Error>> {
     let model = get_schema_any(model, schema)?;
     let json = serde_json::to_string_pretty(&model)?;
-    println!("{}", json);
+    println!("{json}");
 
     Ok(())
 }

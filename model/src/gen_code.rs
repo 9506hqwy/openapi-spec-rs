@@ -33,7 +33,7 @@ pub fn gen_code(output: &Path, schemas: &[SchemaItem]) -> Result<(), Error> {
         let percentage = structs.len() * 100 / config.schemas.len();
         if progress != percentage {
             progress = percentage;
-            println!("Generated {}%", progress);
+            println!("Generated {progress}%");
         }
     }
 
@@ -648,7 +648,7 @@ const KEYWORDS_RUST: &[&str] = &[
 ];
 
 pub fn rust_reserved(keyword: &str) -> bool {
-    KEYWORDS_RUST.iter().any(|&k| k == keyword)
+    KEYWORDS_RUST.contains(&keyword)
 }
 
 // ---------------------------------------------------------------------------

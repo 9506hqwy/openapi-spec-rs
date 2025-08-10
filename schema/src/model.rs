@@ -12,7 +12,8 @@ use std::str::FromStr;
 #[serde(untagged)]
 pub enum Any {
     Boolean(bool),
-    Number(i32),
+    Integer(i32),
+    Number(f32),
     String(String),
     Array(Vec<Any>),
     Object(HashMap<String, Any>),

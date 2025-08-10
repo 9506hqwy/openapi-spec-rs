@@ -1060,7 +1060,7 @@ mod tests {
     #[test]
     fn serde_openapi_extensions() {
         let mut v = OpenApi::default();
-        v.extensions.values.insert("a".to_string(), Any::Number(0));
+        v.extensions.values.insert("a".to_string(), Any::Integer(0));
         let s = serde_json::to_string(&v).unwrap();
         assert_eq!(
             "{\"openapi\":\"\",\"info\":{\"title\":\"\",\"version\":\"\"},\"x-a\":0}",
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn serde_openapi_paths_extension() {
         let mut p = KeyValues::<PathItem>::default();
-        p.extensions.insert("a".to_string(), Any::Number(0));
+        p.extensions.insert("a".to_string(), Any::Integer(0));
         let v = OpenApi {
             paths: Some(p),
             ..Default::default()
@@ -1272,7 +1272,7 @@ mod tests {
             pattern: ParameterPattern::Style(ParameterStyle {
                 schema: Some(Schema {
                     r#type: Some(SchemaTypes::Unit(SchemaType::Integer)),
-                    r#enum: Some(vec![Any::Number(1)]),
+                    r#enum: Some(vec![Any::Integer(1)]),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -1309,7 +1309,7 @@ mod tests {
             pattern: ParameterPattern::Style(ParameterStyle {
                 style: Some("a".to_string()),
                 example: Examples::Value {
-                    example: Some(Any::Number(0)),
+                    example: Some(Any::Integer(0)),
                 },
                 ..Default::default()
             }),
@@ -1392,15 +1392,29 @@ mod tests {
     }
 
     #[test]
-    fn serde_media_type_example_number() {
+    fn serde_media_type_example_integer() {
         let v = MediaType {
             example: Examples::Value {
-                example: Some(Any::Number(0)),
+                example: Some(Any::Integer(0)),
             },
             ..Default::default()
         };
         let s = serde_json::to_string(&v).unwrap();
         assert_eq!("{\"example\":0}", s);
+        let r = serde_json::from_str::<MediaType>(&s).unwrap();
+        assert_eq!(v, r);
+    }
+
+    #[test]
+    fn serde_media_type_example_number() {
+        let v = MediaType {
+            example: Examples::Value {
+                example: Some(Any::Number(1.1)),
+            },
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!("{\"example\":1.1}", s);
         let r = serde_json::from_str::<MediaType>(&s).unwrap();
         assert_eq!(v, r);
     }
@@ -1423,7 +1437,7 @@ mod tests {
     fn serde_media_type_example_array() {
         let v = MediaType {
             example: Examples::Value {
-                example: Some(Any::Array(vec![Any::Number(0)])),
+                example: Some(Any::Array(vec![Any::Integer(0)])),
             },
             ..Default::default()
         };
@@ -1436,7 +1450,7 @@ mod tests {
     #[test]
     fn serde_media_type_example_object() {
         let mut h = HashMap::new();
-        h.insert("a".to_string(), Any::Number(0));
+        h.insert("a".to_string(), Any::Integer(0));
         let v = MediaType {
             example: Examples::Value {
                 example: Some(Any::Object(h)),
@@ -1512,7 +1526,7 @@ mod tests {
     #[test]
     fn serde_responses_extension() {
         let mut v = Responses::default();
-        v.extensions.values.insert("a".to_string(), Any::Number(0));
+        v.extensions.values.insert("a".to_string(), Any::Integer(0));
         let s = serde_json::to_string(&v).unwrap();
         assert_eq!("{\"x-a\":0}", s);
         let r = serde_json::from_str::<Responses>(&s).unwrap();
@@ -1541,7 +1555,7 @@ mod tests {
     fn serde_example_literal() {
         let v = Example {
             value: ExampleValue::Literal {
-                value: Some(Any::Number(0)),
+                value: Some(Any::Integer(0)),
             },
             ..Default::default()
         };
@@ -1661,7 +1675,7 @@ mod tests {
     #[test]
     fn serde_schema_extensions_value() {
         let mut v = Schema::default();
-        v.extensions.values.insert("a".to_string(), Any::Number(0));
+        v.extensions.values.insert("a".to_string(), Any::Integer(0));
         let s = serde_json::to_string(&v).unwrap();
         assert_eq!("{\"a\":0}", s);
         let r = serde_json::from_str::<Schema>(&s).unwrap();
@@ -1673,7 +1687,7 @@ mod tests {
         let mut v = Schema::default();
         v.extensions
             .extensions
-            .insert("a".to_string(), Any::Number(0));
+            .insert("a".to_string(), Any::Integer(0));
         let s = serde_json::to_string(&v).unwrap();
         assert_eq!("{\"x-a\":0}", s);
         let r = serde_json::from_str::<Schema>(&s).unwrap();

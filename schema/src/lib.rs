@@ -320,6 +320,7 @@ pub struct Parameter {
     pub extensions: Extensions,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum ParameterPattern {
@@ -837,6 +838,7 @@ pub struct Xml {
     pub extensions: Extensions,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type")]
 pub enum SecurityScheme {

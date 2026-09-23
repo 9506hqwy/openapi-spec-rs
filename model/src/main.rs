@@ -576,8 +576,8 @@ fn collect_reference(
                         )?;
                     }
                 }
-                _ => {
-                    eprintln!("Failed to read {:?}", &version);
+                Err(e) => {
+                    eprintln!("Failed to read {:?} (Reason: {:?})", &version, e);
                 }
             }
         }

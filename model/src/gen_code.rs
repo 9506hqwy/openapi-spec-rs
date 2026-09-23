@@ -280,8 +280,10 @@ fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Er
                 variants.push(v.to_string());
             }
             _ => {
+                let file = &item.schema_file_name;
+                let schema_name = &item.schema_name;
                 return Err(Error::NotSupported(format!(
-                    "Not supported unit variant: {v:?}."
+                    "Not supported unit variant: {v:?} at {file}#{schema_name}."
                 )));
             }
         }

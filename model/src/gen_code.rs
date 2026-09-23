@@ -274,10 +274,14 @@ fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Er
     let struct_ident = format_ident!("{struct_name}");
 
     let mut variants = vec![];
+    let mut has_null_variant = false;
     for v in item.schema.r#enum.as_ref().unwrap() {
         match v {
             Any::String(v) => {
                 variants.push(v.to_string());
+            }
+            Any::Null => {
+                has_null_variant = true;
             }
             _ => {
                 let file = &item.schema_file_name;
@@ -290,6 +294,9 @@ fn gen_unit_variant(config: &Config, item: &SchemaItem) -> Result<StructInfo, Er
     }
 
     variants.sort();
+    if has_null_variant {
+        variants.push("null".to_string());
+    }
 
     let variant_idents = variants.iter().map(|v| {
         let variant_ident = format_ident!("{}", config.enum_variants_name(v));

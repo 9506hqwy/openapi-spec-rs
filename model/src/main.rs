@@ -780,12 +780,22 @@ impl<'a> Config<'a> {
 
     /// 列挙型のフィールドの名前を取得する。
     fn enum_variants_name(&self, source: &str) -> String {
-        upper_camel_case(source)
+        let name = upper_camel_case(source);
+        if source.chars().next().unwrap_or_default().is_ascii_digit() {
+            format!("N{name}")
+        } else {
+            name
+        }
     }
 
     /// 構造体のフィールドの名前を取得する。
     fn fields_name(&self, source: &str) -> String {
-        snake_case(source)
+        let name = snake_case(source);
+        if source.chars().next().unwrap_or_default().is_ascii_digit() {
+            format!("n{name}")
+        } else {
+            name
+        }
     }
 
     /// 指定したスキーマの名前から型の階層を取得する。

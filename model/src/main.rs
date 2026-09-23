@@ -541,7 +541,7 @@ fn collect_reference(
     for version in all_version(&file_path, another_file)? {
         if !scaned_files.contains(&version) {
             scaned_files.push(version.clone());
-            println!("scanning {:?} {}", &version, scaned_files.len());
+            println!("scanning {:?} {}", version, scaned_files.len());
             match read_part_openapi(&version) {
                 Ok(model) => {
                     for (schema_name, schema) in model
@@ -577,7 +577,7 @@ fn collect_reference(
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to read {:?} (Reason: {:?})", &version, e);
+                    eprintln!("Failed to read {:?} (Reason: {:?})", version, e);
                 }
             }
         }

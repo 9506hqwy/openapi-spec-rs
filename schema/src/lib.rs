@@ -683,16 +683,16 @@ pub struct Schema {
     pub multiple_of: Option<u32>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub maximum: Option<i32>,
+    pub maximum: Option<i64>,
 
     #[serde(skip_serializing_if = "Option::is_none", rename = "exclusiveMaximum")]
-    pub exclusive_maximum: Option<i32>,
+    pub exclusive_maximum: Option<i64>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub minimum: Option<i32>,
+    pub minimum: Option<i64>,
 
     #[serde(skip_serializing_if = "Option::is_none", rename = "exclusiveMinimum")]
-    pub exclusive_minimum: Option<i32>,
+    pub exclusive_minimum: Option<i64>,
 
     // https://datatracker.ietf.org/doc/html/draft-bhutton-json-schema-validation-00#section-6.3
     #[serde(skip_serializing_if = "Option::is_none", rename = "maxLength")]
